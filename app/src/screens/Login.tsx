@@ -15,7 +15,6 @@ import type { JSX } from 'react';
 import { store } from '../api/store.js';
 import {
   ApiError,
-  forgetCreds,
   getApiBase,
   getSavedCreds,
   rememberCreds,
@@ -206,15 +205,6 @@ export function Login({ onConnected }: Props): JSX.Element {
               Fill my saved details
             </button>
             <span className="sub">{savedLabel()}</span>
-            <button
-              className="link"
-              onClick={() => {
-                void forgetCreds();
-                setSaved({});
-              }}
-            >
-              Forget
-            </button>
           </div>
         )}
 

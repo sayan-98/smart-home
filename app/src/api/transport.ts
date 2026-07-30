@@ -29,7 +29,12 @@ export interface DeviceEndpoint {
   apiKey?: string;
 }
 
-const LAN_TIMEOUT_MS = 1200;
+// 1200 ms was chosen for a wired-speed home LAN and is too tight in practice.
+// Over a phone hotspot the round trip is 25-40 ms rather than the 1-3 ms of a
+// real router, and once TCP setup and a retransmit are added a healthy device
+// can miss the window. A probe that gives up on a link that works is worse than
+// one that takes an extra second.
+const LAN_TIMEOUT_MS = 4000;
 const KEY_ENDPOINTS = 'sh.endpoints';
 const KEY_TOKEN = 'sh.token';
 const KEY_API_BASE = 'sh.apiBase';
