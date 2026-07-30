@@ -56,8 +56,11 @@ font:inherit;font-weight:600;cursor:pointer}
 button.sec{background:transparent;border:1px solid var(--line);color:var(--fg)}
 button.danger{background:var(--err)}
 button:disabled{opacity:.5;cursor:default}
+/* width:100% matters. Without it the fields that are not inside a .row flex
+   container (the Wi-Fi password, for one) collapse to the browser's default
+   input width and stop looking like the field above them. */
 input,select{background:var(--bg);color:var(--fg);border:1px solid var(--line);
-border-radius:10px;padding:10px 12px;font:inherit;min-width:0;flex:1}
+border-radius:10px;padding:10px 12px;font:inherit;min-width:0;flex:1;width:100%}
 label{font-size:13px;color:var(--dim);display:block;margin-bottom:4px}
 .f{margin-bottom:12px}
 table{width:100%;border-collapse:collapse;font-size:13px}
@@ -83,6 +86,8 @@ border:1px solid var(--line);border-radius:10px;padding:10px 16px;opacity:0;tran
   <div><h1 id="dname">Smart Home Node</h1><div class="sub" id="dsub">connecting…</div></div>
   <div class="row"><span class="pill" id="pLink">link</span><span class="pill" id="pTime">clock</span></div>
 </header>
+
+<div id="neterr" class="err hide"></div>
 
 <div class="tabs">
   <div class="tab act" data-t="ctl">Control</div>
@@ -159,9 +164,30 @@ let ST={channels:[]}, INFO={}, ws=null, wsOk=false;
 function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');
   clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('show'),2200);}
 
+// Reachability banner. Without this, a device that has gone off Wi-Fi leaves
+// the page sitting on "connecting…" indefinitely with no explanation - the
+// cached HTML renders fine while every API call underneath it fails.
+let netDown=false;
+function showNetErr(){
+  if(netDown)return; netDown=true;
+  const e=$('#neterr');
+  e.innerHTML='<b>Cannot reach the device.</b><br>'+
+    'It may be restarting, or off Wi-Fi. Check that this device is on the same '+
+    'network. If its light is blinking fast, join <b>SmartHome-XXXX</b> and open '+
+    '<b>192.168.4.1</b>. Retrying…';
+  e.classList.remove('hide');
+}
+function clearNetErr(){
+  if(!netDown)return; netDown=false;
+  $('#neterr').classList.add('hide');
+}
 async function raw(path,opt){
-  return fetch(path,Object.assign({credentials:'same-origin',
-    headers:{'Content-Type':'application/json'}},opt||{}));
+  try{
+    const r=await fetch(path,Object.assign({credentials:'same-origin',
+      headers:{'Content-Type':'application/json'}},opt||{}));
+    clearNetErr();
+    return r;
+  }catch(e){ showNetErr(); throw e; }
 }
 async function api(path,opt,retried){
   let r=await raw(path,opt);
@@ -254,11 +280,21 @@ async function saveDevice(){
   catch(e){toast('Failed: '+e.message);}
 }
 
+// Picking a network fills the SSID and jumps straight to the password box.
+// Without the jump people tap a network, see nothing happen, and miss that the
+// password field above the list is the next step.
+function pick(ssid){
+  $('#ssid').value=ssid;
+  const p=$('#pass');
+  p.value='';
+  p.focus();
+  p.scrollIntoView({block:'center',behavior:'smooth'});
+}
 function renderNets(list,scanning){
   const head=scanning?'<div class="sub">Scanning…</div>':'';
   $('#nets').innerHTML=head+(list.length?list
     .sort((a,b)=>b.rssi-a.rssi).map(x=>
-      `<div class="net" onclick="document.getElementById('ssid').value=${JSON.stringify(x.ssid)}">
+      `<div class="net" onclick='pick(${JSON.stringify(x.ssid)})'>
        <span>${x.ssid} ${x.known?'★':''}</span>
        <span class="sub">${x.secure?'🔒 ':''}${x.rssi} dBm</span></div>`).join('')
     :(scanning?'':'<div class="sub">No networks found</div>'));
@@ -346,13 +382,22 @@ function connectWs(){
   }catch(e){setTimeout(connectWs,3000);}
 }
 
+// Keep retrying the first load. A device that is mid-reconnect answers within
+// seconds, and waiting 15 s to find that out feels broken.
+async function boot(){
+  let ok=false;
+  try{ await loadInfo(); await loadState(); renderNames(); ok=true; }
+  catch(e){ ok=false; }
+  if(!ok) setTimeout(boot,3000);
+  return ok;
+}
+
 (async function(){
-  try{await loadInfo();}catch(e){}
-  try{await loadState();renderNames();}catch(e){}
+  await boot();
   connectWs();
   // Polling is a safety net only - the WebSocket is the live path.
   setInterval(()=>{if(!wsOk)loadState().catch(()=>{})},4000);
-  setInterval(loadInfo,15000);
+  setInterval(()=>loadInfo().catch(()=>{}),15000);
 })();
 </script></body></html>)HTML";
 

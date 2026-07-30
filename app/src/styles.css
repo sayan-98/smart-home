@@ -395,6 +395,85 @@ td:first-child {
   border-radius: 12px;
 }
 
+/* --- help / user guide --------------------------------------------------- */
+
+.help {
+  max-width: 900px; /* long prose; full tablet width would be unreadable */
+}
+
+.help-section {
+  padding: 0;
+  overflow: hidden;
+}
+
+.help-head {
+  width: 100%;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.help-chev {
+  color: var(--dim);
+  font-size: 22px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.help-body {
+  padding: 0 18px 18px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.help-body p {
+  margin-bottom: 10px;
+}
+.help-body ol,
+.help-body ul {
+  margin: 0 0 12px 22px;
+}
+.help-body li {
+  margin-bottom: 8px;
+}
+
+.help-table td {
+  padding: 9px 0;
+  vertical-align: top;
+  font-size: 14px;
+}
+.help-table td:first-child {
+  width: 40%;
+  padding-right: 16px;
+  color: var(--fg);
+}
+.help-table td.ok {
+  color: var(--on);
+}
+.help-table td.bad {
+  color: var(--warn);
+}
+
+/* Floating help button on the sign-in screen, where there is no header. */
+.help-fab {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  border-radius: 99px;
+  padding: 12px 22px;
+}
+
 /* --- layout -------------------------------------------------------------- */
 
 main.split {

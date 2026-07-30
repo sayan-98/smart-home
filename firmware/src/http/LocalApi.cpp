@@ -61,7 +61,12 @@ struct WsEvent {
 // --- helpers --------------------------------------------------------------
 
 void sendJson(AsyncWebServerRequest* req, int code, const char* json) {
-  AsyncWebServerResponse* res = req->beginResponse(code, "application/json", json);
+  // charset=utf-8 is not optional here. Wi-Fi SSIDs routinely contain
+  // non-ASCII characters - a phone hotspot named "Sayan's iPhone" uses a curly
+  // apostrophe - and without the charset many clients decode the response as
+  // Latin-1, turning one character into three and making the name unmatchable.
+  AsyncWebServerResponse* res =
+      req->beginResponse(code, "application/json; charset=utf-8", json);
   res->addHeader("Cache-Control", "no-store");
   req->send(res);
 }

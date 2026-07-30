@@ -13,6 +13,7 @@ import { setToken } from './api/transport.js';
 import { Login } from './screens/Login.js';
 import { DeviceDetail } from './screens/DeviceDetail.js';
 import { AiBar } from './screens/AiBar.js';
+import { Help } from './screens/Help.js';
 
 /** Re-renders on every store change. See Store.snapshot for why it must be a counter. */
 function useStore(): void {
@@ -126,6 +127,7 @@ export function App(): JSX.Element {
   const [ready, setReady] = useState(false);
   const [authed, setAuthed] = useState(false);
   const [detail, setDetail] = useState<Device | null>(null);
+  const [help, setHelp] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -155,7 +157,20 @@ export function App(): JSX.Element {
     );
   }
 
-  if (!authed) return <Login onConnected={() => setAuthed(true)} />;
+  // The guide is reachable before sign-in too - "how do I get this on Wi-Fi"
+  // is exactly the question people have at that point.
+  if (help) return <Help onClose={() => setHelp(false)} />;
+
+  if (!authed) {
+    return (
+      <>
+        <Login onConnected={() => setAuthed(true)} />
+        <button className="help-fab" onClick={() => setHelp(true)}>
+          Help
+        </button>
+      </>
+    );
+  }
 
   const home = store.homes.find((h) => h.id === store.activeHomeId);
   const onlineCount = store.devices.filter((d) => d.online).length;
@@ -172,6 +187,9 @@ export function App(): JSX.Element {
         </div>
         <div className="row">
           <ModeBadge />
+          <button className="sec" onClick={() => setHelp(true)}>
+            Help
+          </button>
           <button className="sec" onClick={() => void store.refreshDevices()}>
             Refresh
           </button>

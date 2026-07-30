@@ -388,7 +388,19 @@ bool WiFiService::addNetwork(const char* ssid, const char* password) {
   e.type = EventType::WifiProvisioned;
   EventBus::publish(e);
 
-  requestReconnect();
+  // Only force a reconnect if we are not already on a network.
+  //
+  // Adding a second network usually happens over the first one - you are
+  // standing on the page served by the device, on the Wi-Fi you are about to
+  // supplement. Reconnecting unconditionally drops that connection and leaves
+  // the page you are looking at dead, which reads as "adding a network broke
+  // it". The new entry is picked up on the next natural reconnect anyway.
+  if (!isConnected()) {
+    requestReconnect();
+  } else {
+    SH_LOGI(TAG, "already connected to '%s', new network will be used on the next reconnect",
+            WiFi.SSID().c_str());
+  }
   return true;
 }
 
