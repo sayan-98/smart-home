@@ -82,7 +82,9 @@ function RelayTile({ device, relay }: { device: Device; relay: Relay }): JSX.Ele
 
 function DeviceCard({ device, onOpen }: { device: Device; onOpen: () => void }): JSX.Element {
   return (
-    <section className="card">
+    // device-card marks the one card that should grow to fill the screen, so
+    // the tiles use the whole tablet instead of huddling at the top.
+    <section className="card device-card">
       <header className="card-head">
         <div>
           <h2>{device.name}</h2>

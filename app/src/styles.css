@@ -54,18 +54,54 @@ body {
   overscroll-behavior: none;
 }
 
+/* The whole page is a column that fills the viewport, so the tile grid can be
+   told to take whatever height is left over. Without this the tiles size to
+   their content and sit in a band at the top of a 2560px tablet screen, with
+   most of the display empty. dvh rather than vh so the Android URL/gesture bars
+   appearing does not push content off the bottom. */
 .app {
   max-width: 1400px;
   margin: 0 auto;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
   /* Room for the Android status bar and gesture area. */
   padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
 }
 
+.app > main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 14px;
+}
+
+/* The device card and its grid stretch; everything else keeps its own size. */
+.device-card {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .center {
-  min-height: 100%;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   padding: 20px;
+}
+
+.login {
+  /* Wider than the default card: on an 11" tablet a narrow column of fields
+     reads as a phone layout that was never adapted. */
+  width: min(560px, 100%);
 }
 
 h1 {
@@ -140,16 +176,18 @@ code {
   padding: 44px 20px;
 }
 
-.login {
-  width: min(440px, 100%);
-}
 
 /* --- tiles --------------------------------------------------------------- */
 
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  /* 1fr rows so the tiles divide the leftover height between them, with a
+     floor so they never squash to nothing when many devices are present. */
+  grid-auto-rows: minmax(110px, 1fr);
   gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .tile {
