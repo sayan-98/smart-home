@@ -127,8 +127,12 @@ npx cap add android
 npm run android:run       # deploys to a connected tablet
 ```
 
-Needs **JDK 17** and Android Studio. On Redmi/HyperOS, enable both *USB
-debugging* **and** *Install via USB* in Developer Options.
+Needs **JDK 21** — Capacitor 7's Android module is compiled at source level 21,
+so JDK 17 fails with `invalid source release: 21`. Android Studio is optional;
+the Android SDK plus `gradlew` is enough.
+
+On Redmi/HyperOS, enable both *USB debugging* **and** *Install via USB* in
+Developer Options.
 
 ---
 
