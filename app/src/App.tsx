@@ -14,10 +14,11 @@ import { Login } from './screens/Login.js';
 import { DeviceDetail } from './screens/DeviceDetail.js';
 import { AiBar } from './screens/AiBar.js';
 
+/** Re-renders on every store change. See Store.snapshot for why it must be a counter. */
 function useStore(): void {
   useSyncExternalStore(
     (cb) => store.subscribe(cb),
-    () => store.error ?? String(store.devices.length + (store.mode === 'lan' ? 1000 : 0)),
+    () => store.snapshot,
   );
 }
 

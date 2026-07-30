@@ -129,12 +129,30 @@ class Store {
   private timer: ReturnType<typeof setInterval> | null = null;
   private disposed = false;
 
+  /**
+   * Monotonic change counter, and the ONLY thing React should use as its
+   * snapshot.
+   *
+   * This exists because useSyncExternalStore compares snapshots by identity to
+   * decide whether to re-render. Deriving one from something like
+   * `devices.length` looks reasonable and is quietly wrong: the count stays 1
+   * while channels, online status and relay states all change underneath it, so
+   * React renders once and never again. Bumping a counter on every emit is the
+   * only version that cannot drift from reality.
+   */
+  private version = 0;
+
+  get snapshot(): number {
+    return this.version;
+  }
+
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
   }
 
   private emit(): void {
+    this.version++;
     for (const fn of this.listeners) fn();
   }
 
