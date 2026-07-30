@@ -1,0 +1,312 @@
+// ---------------------------------------------------------------------------
+//  Smart Home OS - data model
+//
+//  Sized for the Supabase free tier (500 MB, pauses after 7 days idle). The
+//  design decision that keeps it inside that budget is DeviceEvent retention:
+//  a 30 s heartbeat is ~1 M rows per device per year, so events are pruned on
+//  a schedule rather than kept forever. See src/jobs/retention.ts.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL") // Supabase: pooled for runtime, direct for migrations
+}
+
+// --- identity --------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships Membership[]
+  auditLogs   AuditLog[]
+
+  @@map("users")
+}
+
+/// Authorization lives here. The requirements never specified who may control
+/// what - no roles, no sharing, no revocation - which is a real gap for
+/// anything multi-user. This is the minimum that closes it.
+model Membership {
+  id     String @id @default(cuid())
+  userId String
+  homeId String
+  role   Role   @default(MEMBER)
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  home Home @relation(fields: [homeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, homeId])
+  @@index([homeId])
+  @@map("memberships")
+}
+
+enum Role {
+  OWNER // full control, may delete the home and revoke others
+  ADMIN // may add devices and users
+  MEMBER // may control devices and edit schedules
+  GUEST // may control devices only
+}
+
+// --- topology --------------------------------------------------------------
+
+model Home {
+  id        String   @id @default(cuid())
+  name      String
+  timezone  String   @default("IST-5:30")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships Membership[]
+  rooms       Room[]
+  devices     Device[]
+  scenes      Scene[]
+  auditLogs   AuditLog[]
+
+  @@map("homes")
+}
+
+model Room {
+  id     String  @id @default(cuid())
+  homeId String
+  name   String
+  icon   String  @default("room")
+  order  Int     @default(0)
+
+  home    Home     @relation(fields: [homeId], references: [id], onDelete: Cascade)
+  devices Device[]
+  relays  Relay[]
+
+  @@index([homeId])
+  @@map("rooms")
+}
+
+// --- devices ---------------------------------------------------------------
+
+model Device {
+  id     String  @id @default(cuid())
+  homeId String?
+  roomId String?
+
+  /// Derived from the eFuse MAC, so it survives a factory reset and a reflash.
+  uuid String @unique
+  mac  String @unique
+  name String @default("Smart Home Node")
+
+  firmwareVersion String @default("0.0.0")
+  hardwareRevision String @default("unknown")
+  relayCount      Int    @default(8)
+
+  /// A device self-registers but stays inert until a logged-in user enters the
+  /// claim code printed on it. Without this, knowing a MAC would be enough to
+  /// adopt someone else's hardware.
+  claimed      Boolean   @default(false)
+  claimCode    String?
+  claimedAt    DateTime?
+  /// bcrypt hash. The plaintext key is shown exactly once, at claim time.
+  apiKeyHash   String?
+  /// Per-device MQTT credentials, so one leaked device cannot subscribe to '#'.
+  mqttUsername String?   @unique
+
+  online       Boolean   @default(false)
+  lastSeenAt   DateTime?
+  lastIp       String?
+  rssi         Int?
+  freeHeap     Int?
+  uptimeMs     BigInt?
+  resetReason  String?
+  /// Surfaced prominently in the UI: it means the 5 V supply is inadequate,
+  /// not that the firmware crashed.
+  lastBrownout Boolean   @default(false)
+
+  capabilities Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  home        Home?         @relation(fields: [homeId], references: [id], onDelete: SetNull)
+  room        Room?         @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  relays      Relay[]
+  schedules   Schedule[]
+  automations Automation[]
+  events      DeviceEvent[]
+
+  @@index([homeId])
+  @@index([online])
+  @@map("devices")
+}
+
+model Relay {
+  id       String @id @default(cuid())
+  deviceId String
+  roomId   String?
+  channel  Int
+
+  name     String  @default("Socket")
+  icon     String  @default("socket")
+  imageUrl String?
+  groupId  Int     @default(0)
+  enabled  Boolean @default(true)
+
+  state  Boolean @default(false)
+  /// Why it changed: physical | app | alexa | schedule | automation | cloud |
+  /// restore | timer. This is what lets the UI explain itself.
+  source String  @default("unknown")
+  /// Monotonic, assigned by the device. Conflict resolution compares this -
+  /// a cloud write only wins if its rev is newer.
+  rev    Int     @default(0)
+
+  changedAt DateTime @default(now())
+  /// False means the device had no clock, so changedAt is an uptime counter.
+  tsSynced  Boolean  @default(false)
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  room   Room?  @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@unique([deviceId, channel])
+  @@index([roomId])
+  @@map("relays")
+}
+
+// --- logic -----------------------------------------------------------------
+
+/// Authored here, executed ON THE DEVICE. That is what keeps schedules working
+/// when the internet is down and the backend is asleep on a free tier.
+model Schedule {
+  id       String @id @default(cuid())
+  deviceId String
+
+  name     String
+  enabled  Boolean @default(true)
+  channels Int[]
+  action   String // on | off | toggle
+  minute   Int // minutes since local midnight, 0..1439
+  days     Int     @default(127) // bitmask, bit0 = Sunday
+  catchUp  Boolean @default(false)
+
+  /// Set when a Groq-authored rule created this, for the audit trail.
+  createdByAi Boolean @default(false)
+  sourcePrompt String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId])
+  @@map("schedules")
+}
+
+model Automation {
+  id       String @id @default(cuid())
+  deviceId String
+
+  name        String
+  enabled     Boolean @default(true)
+  cooldownSec Int     @default(2)
+  trigger     Json
+  conditions  Json    @default("[]")
+  actions     Json
+
+  createdByAi  Boolean @default(false)
+  sourcePrompt String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId])
+  @@map("automations")
+}
+
+model Scene {
+  id     String @id @default(cuid())
+  homeId String
+  name   String
+  icon   String @default("scene")
+  /// [{ deviceUuid, channel, state }]
+  steps  Json
+
+  createdAt DateTime @default(now())
+
+  home Home @relation(fields: [homeId], references: [id], onDelete: Cascade)
+
+  @@index([homeId])
+  @@map("scenes")
+}
+
+// --- telemetry -------------------------------------------------------------
+
+/// High volume. A 30 s heartbeat is ~1 M rows/device/year, and the Supabase
+/// free tier is 500 MB total, so this table is pruned on a schedule.
+model DeviceEvent {
+  id       BigInt   @id @default(autoincrement())
+  deviceId String
+  type     String // relay | heartbeat | online | offline | ota | error
+  channel  Int?
+  state    Boolean?
+  source   String?
+  rev      Int?
+  payload  Json?
+  at       DateTime @default(now())
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, at])
+  @@index([at])
+  @@map("device_events")
+}
+
+/// Every state change a human or the AI caused, kept longer than telemetry.
+/// AI-proposed actions record the sentence that produced them.
+model AuditLog {
+  id     BigInt  @id @default(autoincrement())
+  homeId String?
+  userId String?
+
+  action   String
+  target   String?
+  detail   Json?
+  aiPrompt String?
+  ip       String?
+  at       DateTime @default(now())
+
+  home Home? @relation(fields: [homeId], references: [id], onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([homeId, at])
+  @@map("audit_log")
+}
+
+// --- OTA -------------------------------------------------------------------
+
+model OtaRelease {
+  id       String @id @default(cuid())
+  version  String
+  hardware String @default("devkitv1-8ch")
+  url      String
+  sha256   String
+  notes    String?
+
+  /// Staged rollout. 0 disables the release, 100 sends it to everyone.
+  /// Pushing a bad build to an entire fleet at once is avoidable.
+  rolloutPercent Int     @default(0)
+  mandatory      Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@unique([version, hardware])
+  @@map("ota_releases")
+}

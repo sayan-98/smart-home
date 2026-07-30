@@ -1,0 +1,25 @@
+# Smart Home OS - 4 MB flash layout with dual OTA slots.
+#
+# Two app slots mean a bad OTA rolls back instead of bricking the unit
+# (docs/OTA.md). Both slots must be identical in size and 64 KB aligned.
+#
+# The filesystem is deliberately tiny: the web UI is embedded in the app image,
+# not served from LittleFS. A filesystem image is a separate upload step people
+# forget, and a corrupt filesystem would leave a bricked-looking device with no
+# way to reconfigure it. The 128 KB kept here is headroom for future uploaded
+# assets (custom icons), nothing more.
+#
+# Budget: 0x400000 total
+#   0x9000  .. 0x10000  bootloader + partition table + nvs + otadata
+#   0x10000 .. 0x1F0000 app0     1.875 MB
+#   0x1F0000.. 0x3D0000 app1     1.875 MB
+#   0x3D0000.. 0x3F0000 littlefs 128 KB
+#   0x3F0000.. 0x400000 coredump 64 KB
+#
+# Name,     Type, SubType,  Offset,   Size,     Flags
+nvs,        data, nvs,      0x9000,   0x5000,
+otadata,    data, ota,      0xE000,   0x2000,
+app0,       app,  ota_0,    0x10000,  0x1E0000,
+app1,       app,  ota_1,    0x1F0000, 0x1E0000,
+spiffs,     data, spiffs,   0x3D0000, 0x20000,
+coredump,   data, coredump, 0x3F0000, 0x10000,

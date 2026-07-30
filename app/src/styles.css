@@ -1,0 +1,395 @@
+/* ---------------------------------------------------------------------------
+   Tablet-first. The Redmi Pad 2 is 11", so landscape gets two panes and tiles
+   stay large - this is as much a wall panel as a handheld app, and a mis-tap
+   switches a real appliance.
+   --------------------------------------------------------------------------- */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #0e1116;
+  --card: #171b22;
+  --line: #252b35;
+  --fg: #e6e9ef;
+  --dim: #8b94a3;
+  --on: #22c55e;
+  --off: #3a4150;
+  --acc: #3b82f6;
+  --warn: #f59e0b;
+  --err: #ef4444;
+  --radius: 16px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4f6f9;
+    --card: #ffffff;
+    --line: #e2e6ec;
+    --fg: #111827;
+    --dim: #6b7280;
+    --off: #cbd5e1;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font:
+    16px/1.55 system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+.app {
+  max-width: 1400px;
+  margin: 0 auto;
+  /* Room for the Android status bar and gesture area. */
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+}
+
+.center {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+h1 {
+  font-size: 24px;
+  font-weight: 650;
+}
+h2 {
+  font-size: 19px;
+  font-weight: 620;
+}
+h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 22px 0 10px;
+}
+.sub {
+  color: var(--dim);
+  font-size: 14px;
+}
+.hint {
+  margin-top: 10px;
+  line-height: 1.5;
+}
+code {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* --- cards --------------------------------------------------------------- */
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px;
+  margin-bottom: 14px;
+}
+
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.card.empty {
+  text-align: center;
+  padding: 44px 20px;
+}
+
+.login {
+  width: min(440px, 100%);
+}
+
+/* --- tiles --------------------------------------------------------------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.tile {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px;
+  min-height: 104px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  transition:
+    border-color 0.15s,
+    transform 0.08s;
+}
+
+.tile:active {
+  transform: scale(0.985);
+}
+.tile.on {
+  border-color: var(--on);
+}
+.tile.disabled,
+.tile:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tile-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tile-name {
+  font-weight: 620;
+  font-size: 17px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile-meta {
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.switch {
+  width: 52px;
+  height: 30px;
+  border-radius: 99px;
+  background: var(--off);
+  position: relative;
+  flex: 0 0 auto;
+  transition: background 0.18s;
+}
+.switch i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.18s;
+}
+.tile.on .switch {
+  background: var(--on);
+}
+.tile.on .switch i {
+  left: 25px;
+}
+
+/* --- controls ------------------------------------------------------------ */
+
+button {
+  background: var(--acc);
+  color: #fff;
+  border: 0;
+  border-radius: 10px;
+  padding: 11px 18px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 44px; /* comfortable touch target */
+}
+button.sec {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--fg);
+}
+button.link {
+  background: none;
+  color: var(--acc);
+  padding: 8px 0;
+  font-weight: 500;
+  min-height: 0;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.chip {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--dim);
+  border-radius: 99px;
+  padding: 6px 14px;
+  font-size: 13px;
+  min-height: 0;
+  font-weight: 500;
+}
+.chip.sel {
+  border-color: var(--acc);
+  color: var(--fg);
+}
+
+input {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font: inherit;
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+  min-height: 44px;
+}
+
+label {
+  display: block;
+  font-size: 13px;
+  color: var(--dim);
+  margin: 12px 0 5px;
+}
+
+.field {
+  margin-bottom: 16px;
+}
+.restore {
+  margin-top: 8px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+td {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+td:first-child {
+  color: var(--dim);
+  width: 42%;
+}
+
+/* --- status -------------------------------------------------------------- */
+
+.badge {
+  font-size: 13px;
+  padding: 5px 12px;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  color: var(--dim);
+}
+.badge.lan {
+  color: var(--on);
+  border-color: var(--on);
+}
+.badge.cloud {
+  color: var(--acc);
+  border-color: var(--acc);
+}
+.badge.offline {
+  color: var(--err);
+  border-color: var(--err);
+}
+
+.err,
+.warn {
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.err {
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+  border: 1px solid var(--err);
+  color: var(--err);
+}
+.warn {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+}
+
+/* --- AI ------------------------------------------------------------------ */
+
+.ai-result {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.ai-result.miss {
+  color: var(--dim);
+}
+.ai-result ul {
+  margin: 8px 0 8px 20px;
+  font-size: 14px;
+}
+.confirm {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--warn);
+  border-radius: 12px;
+}
+
+/* --- layout -------------------------------------------------------------- */
+
+main.split {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 1fr;
+}
+
+/* Landscape on an 11" tablet: list on the left, detail on the right. */
+@media (min-width: 900px) {
+  main.split {
+    grid-template-columns: 1.4fr 1fr;
+    align-items: start;
+  }
+  .pane.detail {
+    position: sticky;
+    top: 16px;
+  }
+}

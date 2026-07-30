@@ -1,0 +1,45 @@
+# --- Secrets: never commit ---
+.env
+.env.*
+!.env.example
+*.local.h
+firmware/include/Secrets.h
+secrets/
+*.pem
+*.key
+!**/*.example.*
+
+# --- PlatformIO / firmware ---
+.pio/
+.pioenvs/
+.piolibdeps/
+firmware/.pio/
+*.bin
+*.elf
+*.map
+!firmware/releases/**/*.bin
+
+# --- Node ---
+node_modules/
+dist/
+build/
+coverage/
+*.log
+npm-debug.log*
+
+# --- Capacitor / Android ---
+app/android/
+app/ios/
+app/.capacitor/
+*.apk
+*.aab
+local.properties
+.gradle/
+
+# --- Editors / OS ---
+.vscode/
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

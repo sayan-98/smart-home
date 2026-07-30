@@ -1,0 +1,52 @@
+# ---------------------------------------------------------------------------
+#  Local development stack.
+#
+#  Gives you the same shape as production (Postgres + a broker) without
+#  touching Supabase or HiveMQ, so you can work offline and not burn free-tier
+#  quota while iterating.
+#
+#    docker compose -f infra/docker-compose.yml up -d
+#
+#  Then in backend/.env:
+#    DATABASE_URL=postgresql://smarthome:smarthome@localhost:5432/smarthome
+#    DIRECT_URL=postgresql://smarthome:smarthome@localhost:5432/smarthome
+#    MQTT_URL=mqtt://localhost:1883
+#
+#  And on the device (captive portal -> Settings, or POST /api/config):
+#    mqttHost = <your PC's LAN IP>, mqttPort = 1883, mqttTls = false
+# ---------------------------------------------------------------------------
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: smarthome-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: smarthome
+      POSTGRES_PASSWORD: smarthome
+      POSTGRES_DB: smarthome
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U smarthome']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: smarthome-mqtt
+    restart: unless-stopped
+    ports:
+      - '1883:1883'   # MQTT
+      - '9001:9001'   # MQTT over WebSocket, for browser clients
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqttdata:/mosquitto/data
+      - mqttlog:/mosquitto/log
+
+volumes:
+  pgdata:
+  mqttdata:
+  mqttlog:

@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------------
+#  Render blueprint - free tier.
+#
+#  Two things to know before relying on this:
+#
+#  1. The free plan SLEEPS after 15 minutes with no traffic, and takes 30-60 s
+#     to wake. That is survivable here only because realtime does NOT go
+#     through this service: devices talk to HiveMQ Cloud, which is always on.
+#     Render serves REST, OTA manifests and the dashboard.
+#
+#  2. Render cannot host the MQTT broker at all - it exposes no raw TCP ports.
+#     Do not try; use HiveMQ Cloud Serverless (free).
+#
+#  Keep it warm with a free cron (cron-job.org) hitting /health every 10
+#  minutes. That also keeps the Supabase project from pausing after 7 idle days.
+# ---------------------------------------------------------------------------
+services:
+  - type: web
+    name: smart-home-os-backend
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    rootDir: backend
+    buildCommand: npm ci && npx prisma generate && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      # Set these in the Render dashboard, not here - this file is committed.
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: MQTT_URL
+        sync: false
+      - key: MQTT_USERNAME
+        sync: false
+      - key: MQTT_PASSWORD
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: AI_RATE_LIMIT_PER_MINUTE
+        value: 10
+      - key: EVENT_RETENTION_DAYS
+        value: 30
+      - key: CORS_ORIGINS
+        value: '*'
