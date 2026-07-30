@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <driver/gpio.h>
 #include <esp_task_wdt.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -267,14 +268,31 @@ void tickPersist() {
 // ---------------------------------------------------------------------------
 
 void RelayManager::begin() {
-  // Drive the latch to the inactive level BEFORE switching the pin to an
-  // output, so the pin never momentarily drives the active level. The real
-  // fix for the boot glitch is the external pull-ups (docs/WIRING.md) - this
-  // just avoids adding to the problem.
+  // Bring each relay pin up without ever driving the active level.
+  //
+  // The order matters and is not obvious. On arduino-esp32 3.x, digitalWrite()
+  // on a pin that has not been claimed as a GPIO is a no-op that logs an error,
+  // so the naive "write the latch, then pinMode(OUTPUT)" trick silently does
+  // nothing. Instead:
+  //   1. pinMode(INPUT_PULLUP) claims the pin and, for an active-LOW board,
+  //      the weak pull-up already holds the line at "relay off".
+  //   2. gpio_set_level() preloads the output latch while the driver is still
+  //      disabled. This is the step that actually prevents the glitch.
+  //   3. pinMode(OUTPUT) enables the driver, which now emits the correct level
+  //      from its first instant. It does not clear the latch, because the pin
+  //      is already registered as a GPIO from step 1.
+  //
+  // The real protection during reset is still the external pull-ups
+  // (docs/WIRING.md) - the code is not running then. This just makes sure the
+  // firmware does not add a glitch of its own once it is.
   for (uint8_t i = 0; i < kN; ++i) {
-    digitalWrite(board::kRelayPins[i], inactiveLevel());
-    pinMode(board::kRelayPins[i], OUTPUT);
-    digitalWrite(board::kRelayPins[i], inactiveLevel());
+    const int pin = board::kRelayPins[i];
+    const gpio_num_t gpio = static_cast<gpio_num_t>(pin);
+
+    pinMode(pin, INPUT_PULLUP);
+    gpio_set_level(gpio, inactiveLevel());
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, inactiveLevel());
 
     g_state[i] = ChannelState{};
     g_state[i].source = Source::Restore;

@@ -75,6 +75,7 @@ void App::boot() {
 
   // --- 2. identity and configuration --------------------------------------
   DeviceInfo::begin();
+  NvsStore::begin();  // create namespaces before anything reads them
   ConfigStore::begin();
   Logger::setLevel(static_cast<LogLevel>(ConfigStore::device().logLevel));
   Security::begin();

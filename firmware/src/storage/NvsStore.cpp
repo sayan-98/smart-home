@@ -24,6 +24,26 @@ struct Scope {
 
 }  // namespace
 
+namespace {
+const char* const kAllNamespaces[] = {
+    nvsns::kConfig, nvsns::kRelay,      nvsns::kWifi,  nvsns::kSecurity,
+    nvsns::kSchedule, nvsns::kAutomation, nvsns::kSystem};
+}  // namespace
+
+void NvsStore::begin() {
+  uint8_t created = 0;
+  for (const char* ns : kAllNamespaces) {
+    // Opening read-WRITE creates the namespace if it is missing. Every later
+    // read-only open then succeeds instead of logging NOT_FOUND.
+    Scope s(ns, false);
+    if (s.ok) created++;
+  }
+  SH_LOGI(TAG, "%u/%u namespaces ready, %u free entries",
+          static_cast<unsigned>(created),
+          static_cast<unsigned>(sizeof(kAllNamespaces) / sizeof(kAllNamespaces[0])),
+          static_cast<unsigned>(freeEntries()));
+}
+
 bool NvsStore::putString(const char* ns, const char* key, const char* value) {
   Scope s(ns, false);
   if (!s.ok) return false;
@@ -106,10 +126,7 @@ bool NvsStore::clearNamespace(const char* ns) {
 }
 
 void NvsStore::factoryWipe() {
-  static const char* kAll[] = {
-      nvsns::kConfig, nvsns::kRelay,      nvsns::kWifi,   nvsns::kSecurity,
-      nvsns::kSchedule, nvsns::kAutomation, nvsns::kSystem};
-  for (const char* ns : kAll) {
+  for (const char* ns : kAllNamespaces) {
     if (clearNamespace(ns)) {
       SH_LOGW(TAG, "wiped namespace %s", ns);
     }

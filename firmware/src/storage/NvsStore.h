@@ -25,6 +25,14 @@ inline constexpr const char* kSystem = "sh-sys";    // boot counters, ota flags
 
 class NvsStore {
  public:
+  /// Creates every namespace this firmware uses, once, at boot.
+  ///
+  /// Without it the first read of each namespace opens read-only against a
+  /// namespace that does not exist yet, and the Preferences layer logs an
+  /// `nvs_open failed: NOT_FOUND` error. Harmless, but it looks like a fault
+  /// on a brand-new device and buries the lines that matter.
+  static void begin();
+
   static bool putString(const char* ns, const char* key, const char* value);
   static size_t getString(const char* ns, const char* key, char* out, size_t cap,
                           const char* fallback = "");
