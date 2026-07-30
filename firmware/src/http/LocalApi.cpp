@@ -667,7 +667,10 @@ void LocalApi::begin() {
 
   g_server.on("/api/info", HTTP_GET, handleInfo);
   g_server.on("/api/state", HTTP_GET, handleState);
-  g_server.on("/api/config", HTTP_GET, handleConfigGet);
+  // NOT /api/config - that path belongs to the Hue protocol, which Alexa uses
+  // to identify a bridge. Serving our own configuration there made every Alexa
+  // discovery fail. See AlexaLocal::attach.
+  g_server.on("/api/settings", HTTP_GET, handleConfigGet);
   g_server.on("/api/diag", HTTP_GET, handleDiag);
   g_server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);
   g_server.on("/api/wifi/saved", HTTP_GET, handleWifiSaved);
@@ -679,7 +682,7 @@ void LocalApi::begin() {
   g_server.on("/api/automations", HTTP_POST, handleAutomationsPost, nullptr, collectBody);
   g_server.on("/api/ota/check", HTTP_POST, handleOtaCheck, nullptr, collectBody);
 
-  g_server.on("/api/config", HTTP_POST, handleConfigPost, nullptr, collectBody);
+  g_server.on("/api/settings", HTTP_POST, handleConfigPost, nullptr, collectBody);
   g_server.on("/api/wifi", HTTP_POST, handleWifiPost, nullptr, collectBody);
   g_server.on("/api/wifi/forget", HTTP_POST, handleWifiForget, nullptr, collectBody);
   g_server.on("/api/local-auth", HTTP_POST, handleLocalAuth, nullptr, collectBody);

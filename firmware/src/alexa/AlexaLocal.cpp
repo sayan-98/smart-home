@@ -127,8 +127,13 @@ void lightToJson(uint8_t ch, JsonObject o) {
     o["productname"] = "Hue white lamp";
   }
   o["name"] = cfg.name;
-  o["manufacturername"] = "Signify Netherlands B.V.";
-  o["swversion"] = DeviceInfo::firmwareVersion();
+  // "Philips", not "Signify". Signify is the modern legal name and is what a
+  // current bridge reports, but Alexa's Hue handling still keys off the older
+  // string - as do the emulations that are known to work with it.
+  o["manufacturername"] = "Philips";
+  // A real lamp firmware version. Alexa has been observed to reject lights
+  // whose swversion does not look like one; our own firmware version does not.
+  o["swversion"] = "5.127.1.26420";
 
   char uid[40];
   snprintf(uid, sizeof(uid), "%c%c:%c%c:%c%c:%c%c:%c%c:%c%c:00:11-%02x",
@@ -154,6 +159,35 @@ void sendJson(AsyncWebServerRequest* req, const char* json) {
   AsyncWebServerResponse* res = req->beginResponse(200, "application/json", json);
   res->addHeader("Cache-Control", "no-store");
   req->send(res);
+}
+
+/// The bridge description. `full` adds the whitelist, which only an
+/// authenticated request gets.
+void buildBridgeConfig(JsonObject cfg, bool full) {
+  const IPAddress ip = WiFi.localIP();
+  cfg["name"] = "Philips hue";
+  cfg["bridgeid"] = g_bridgeId;
+  cfg["modelid"] = "BSB002";
+  cfg["swversion"] = "1948086000";
+  cfg["apiversion"] = "1.24.0";
+  cfg["datastoreversion"] = "93";
+  cfg["mac"] = DeviceInfo::macAddress();
+  cfg["ipaddress"] = ip.toString();
+  cfg["netmask"] = WiFi.subnetMask().toString();
+  cfg["gateway"] = WiFi.gatewayIP().toString();
+  cfg["dhcp"] = true;
+  cfg["linkbutton"] = false;
+  cfg["factorynew"] = false;
+  cfg["replacesbridgeid"] = nullptr;
+  cfg["starterkitid"] = "";
+
+  if (full) {
+    JsonObject whitelist = cfg["whitelist"].to<JsonObject>();
+    JsonObject entry = whitelist[g_macFlat].to<JsonObject>();
+    entry["name"] = "SmartHomeOS";
+    entry["create date"] = "2026-01-01T00:00:00";
+    entry["last use date"] = "2026-01-01T00:00:00";
+  }
 }
 
 /// Splits "/api/<user>/lights/3/state" into its parts.
@@ -245,7 +279,12 @@ void AlexaLocal::attach(AsyncWebServer& server) {
              "<URLBase>http://%u.%u.%u.%u:80/</URLBase>"
              "<device>"
              "<deviceType>urn:schemas-upnp-org:device:Basic:1</deviceType>"
-             "<friendlyName>%s (%u.%u.%u.%u)</friendlyName>"
+             // Must be "Philips hue (<ip>)". Alexa matches this string when
+             // deciding whether a discovered UPnP device is a Hue bridge; a
+             // friendly product name here gets the device fetched and then
+             // silently ignored, which looks exactly like "discovery works but
+             // Alexa finds nothing". The user-facing name lives on each light.
+             "<friendlyName>Philips hue (%u.%u.%u.%u)</friendlyName>"
              "<manufacturer>Royal Philips Electronics</manufacturer>"
              "<manufacturerURL>http://www.philips.com</manufacturerURL>"
              "<modelDescription>Philips hue Personal Wireless Lighting</modelDescription>"
@@ -254,14 +293,35 @@ void AlexaLocal::attach(AsyncWebServer& server) {
              "<modelURL>http://www.meethue.com</modelURL>"
              "<serialNumber>%s</serialNumber>"
              "<UDN>%s</UDN>"
+             "<iconList><icon>"
+             "<mimetype>image/png</mimetype><height>48</height><width>48</width>"
+             "<depth>24</depth><url>hue_logo_0.png</url>"
+             "</icon></iconList>"
              "<presentationURL>index.html</presentationURL>"
              "</device></root>",
-             ip[0], ip[1], ip[2], ip[3], ConfigStore::device().deviceName, ip[0],
-             ip[1], ip[2], ip[3], g_macFlat, g_udn);
-    AsyncWebServerResponse* res = req->beginResponse(200, "application/xml", xml);
+             ip[0], ip[1], ip[2], ip[3], ip[0], ip[1], ip[2], ip[3], g_macFlat, g_udn);
+    // text/xml, matching what a real bridge sends. Some UPnP clients are picky.
+    AsyncWebServerResponse* res = req->beginResponse(200, "text/xml", xml);
     req->send(res);
     free(xml);
     SH_LOGI(TAG, "description.xml served to %s", req->client()->remoteIP().toString().c_str());
+  });
+
+  // GET /api/config - UNAUTHENTICATED bridge identification.
+  //
+  // This is the request that decides whether Alexa believes there is a Hue
+  // bridge here at all, and it is part of the Hue protocol, not ours. The
+  // firmware's own configuration therefore lives at /api/settings: putting it
+  // on this path made every discovery fail, because Alexa read a device config
+  // where it expected a bridge description and concluded this was not a bridge.
+  server.on("/api/config", HTTP_GET, [](AsyncWebServerRequest* req) {
+    JsonDocument doc;
+    buildBridgeConfig(doc.to<JsonObject>(), /*full=*/false);
+    char buf[640];
+    serializeJson(doc, buf, sizeof(buf));
+    sendJson(req, buf);
+    SH_LOGI(TAG, "bridge config served to %s",
+            req->client()->remoteIP().toString().c_str());
   });
 
   // The "link button" pairing call. A real bridge requires a physical button
@@ -343,26 +403,9 @@ bool AlexaLocal::handleUnmatched(AsyncWebServerRequest* req, const char* body) {
 
   // ---- GET /api/<user>/config and GET /api/<user> -------------------------
   {
-    const IPAddress ip = WiFi.localIP();
     JsonDocument doc;
     JsonObject cfg = p.isConfig ? doc.to<JsonObject>() : doc["config"].to<JsonObject>();
-    cfg["name"] = "Philips hue";
-    cfg["bridgeid"] = g_bridgeId;
-    cfg["modelid"] = "BSB002";
-    cfg["swversion"] = "1948086000";
-    cfg["apiversion"] = "1.24.0";
-    cfg["mac"] = DeviceInfo::macAddress();
-    cfg["ipaddress"] = ip.toString();
-    cfg["netmask"] = WiFi.subnetMask().toString();
-    cfg["gateway"] = WiFi.gatewayIP().toString();
-    cfg["dhcp"] = true;
-    cfg["linkbutton"] = false;
-    cfg["factorynew"] = false;
-    JsonObject whitelist = cfg["whitelist"].to<JsonObject>();
-    JsonObject entry = whitelist[g_macFlat].to<JsonObject>();
-    entry["name"] = "SmartHomeOS";
-    entry["create date"] = "2026-01-01T00:00:00";
-    entry["last use date"] = "2026-01-01T00:00:00";
+    buildBridgeConfig(cfg, /*full=*/true);
 
     if (!p.isConfig) {
       JsonObject lights = doc["lights"].to<JsonObject>();

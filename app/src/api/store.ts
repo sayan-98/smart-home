@@ -710,7 +710,7 @@ class Store {
 
   async rename(deviceId: string, channel: number, name: string): Promise<void> {
     if (this.direct && this.directBase) {
-      await lan(this.directBase, '/api/config', {
+      await lan(this.directBase, '/api/settings', {
         method: 'POST',
         body: JSON.stringify({ channels: [{ index: channel, name }] }),
       });
@@ -726,7 +726,7 @@ class Store {
 
   async setRestore(deviceId: string, channel: number, restore: 'off' | 'on' | 'last'): Promise<void> {
     if (this.direct && this.directBase) {
-      await lan(this.directBase, '/api/config', {
+      await lan(this.directBase, '/api/settings', {
         method: 'POST',
         body: JSON.stringify({ channels: [{ index: channel, restore }] }),
       });

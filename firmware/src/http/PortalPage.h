@@ -172,22 +172,51 @@ function showNetErr(){
   if(netDown)return; netDown=true;
   const e=$('#neterr');
   e.innerHTML='<b>Cannot reach the device.</b><br>'+
-    'It may be restarting, or off Wi-Fi. Check that this device is on the same '+
-    'network. If its light is blinking fast, join <b>SmartHome-XXXX</b> and open '+
-    '<b>192.168.4.1</b>. Retrying…';
+    'It may be restarting, or off Wi-Fi. Retrying…'+
+    (devIp?'<br>If this persists, open <b>http://'+devIp+'</b> directly - '+
+           'the <code>.local</code> name is unreliable once a lookup has failed.':'')+
+    '<br>If its light is blinking fast, join <b>SmartHome-XXXX</b> and open '+
+    '<b>192.168.4.1</b>.';
   e.classList.remove('hide');
 }
 function clearNetErr(){
   if(!netDown)return; netDown=false;
   $('#neterr').classList.add('hide');
 }
+// Self-healing address.
+//
+// This page is normally opened as http://smarthome-XXXX.local, and .local is
+// fragile: Chrome caches a FAILED lookup, so if the device reboots while the
+// page is open, every later request dies with ERR_NAME_NOT_RESOLVED even after
+// the device is back. The page looks alive and nothing works.
+//
+// So: remember the device's own IP (it tells us in /api/info) and fall back to
+// it whenever a request fails by name. An IP needs no resolver and cannot go
+// stale this way.
+let devIp=localStorage.getItem('sh_ip')||'';
+function altBase(){
+  if(!devIp)return null;
+  if(location.hostname===devIp)return null;   // already on the IP
+  return 'http://'+devIp;
+}
 async function raw(path,opt){
+  const init=Object.assign({credentials:'same-origin',
+    headers:{'Content-Type':'application/json'}},opt||{});
   try{
-    const r=await fetch(path,Object.assign({credentials:'same-origin',
-      headers:{'Content-Type':'application/json'}},opt||{}));
+    const r=await fetch(path,init);
     clearNetErr();
     return r;
-  }catch(e){ showNetErr(); throw e; }
+  }catch(e){
+    const alt=altBase();
+    if(alt){
+      try{
+        const r=await fetch(alt+path,init);
+        clearNetErr();
+        return r;
+      }catch(e2){ /* the IP failed too - genuinely unreachable */ }
+    }
+    showNetErr(); throw e;
+  }
 }
 async function api(path,opt,retried){
   let r=await raw(path,opt);
@@ -245,6 +274,9 @@ async function all(a){
 
 async function loadInfo(){
   INFO=await api('/api/info');
+  // Cache the device's own address so a later name-resolution failure has
+  // something concrete to fall back to.
+  if(INFO.ip&&INFO.ip!=='0.0.0.0'){devIp=INFO.ip;localStorage.setItem('sh_ip',devIp);}
   $('#dname').textContent=INFO.name||'Smart Home Node';
   $('#dsub').textContent=INFO.uuid+' · fw '+INFO.firmware+' · '+INFO.relayCount+' channels';
   $('#claim').textContent=INFO.claimCode||'--------';
@@ -269,12 +301,12 @@ function renderNames(){
 }
 async function saveNames(){
   const channels=$$('.cn').map(i=>({index:+i.dataset.c,name:i.value.trim()}));
-  try{await api('/api/config',{method:'POST',body:JSON.stringify({channels})});
+  try{await api('/api/settings',{method:'POST',body:JSON.stringify({channels})});
     toast('Names saved');await loadState();}
   catch(e){toast('Failed: '+e.message);}
 }
 async function saveDevice(){
-  try{await api('/api/config',{method:'POST',
+  try{await api('/api/settings',{method:'POST',
     body:JSON.stringify({device:{name:$('#devname').value.trim(),timezone:$('#tz').value.trim()}})});
     toast('Saved');loadInfo();}
   catch(e){toast('Failed: '+e.message);}
