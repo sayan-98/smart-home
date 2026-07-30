@@ -1,4 +1,4 @@
-# Smart Home OS
+﻿# Smart Home OS
 
 An ESP32-based smart home system that switches eight mains sockets from **three
 places at once** — the wall switch, a tablet app, and Alexa — and keeps the
@@ -193,6 +193,7 @@ and hardware safety.
 |---|---|
 | [WIRING.md](docs/WIRING.md) | Pin map, power budget, mains safety, checklist, troubleshooting |
 | [ALEXA.md](docs/ALEXA.md) | Echo setup, why discovery fails, naming |
+| [REMOTE.md](docs/REMOTE.md) | Control from anywhere: broker setup, iPhone via Safari, cost |
 | [API.md](docs/API.md) | On-device REST + WebSocket |
 | [MQTT.md](docs/MQTT.md) | Topic tree, conflict resolution, ACLs |
 | [OTA.md](docs/OTA.md) | Staged rollout, rollback testing, cert expiry |
