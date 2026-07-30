@@ -78,6 +78,47 @@ export async function setBroker(broker: StoredBroker | null): Promise<void> {
   else await Preferences.remove({ key: KEY_BROKER });
 }
 
+// --- remembered sign-in details -------------------------------------------
+//
+// Broker hostnames are a 32-character hex blob, and digging one out of a
+// dashboard every time you reinstall is a reason to stop using the thing. So
+// whatever last worked is kept, and offered back with one tap.
+//
+// It lives in Capacitor Preferences, which is app-private storage on Android:
+// other apps cannot read it, but anyone holding an unlocked tablet can open
+// this app anyway. That is the same trade every phone password manager makes,
+// and it is the right one for a household device. Nothing is ever sent
+// anywhere, and nothing is ever committed to the repository.
+
+const KEY_SAVED = 'sh.savedCreds';
+
+export interface SavedCreds {
+  directHint?: string;
+  broker?: StoredBroker;
+  account?: { base: string; email: string; password: string };
+}
+
+export async function getSavedCreds(): Promise<SavedCreds> {
+  const raw = (await Preferences.get({ key: KEY_SAVED })).value;
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as SavedCreds;
+  } catch {
+    return {};
+  }
+}
+
+/** Merges into whatever is already remembered. */
+export async function rememberCreds(patch: SavedCreds): Promise<void> {
+  const current = await getSavedCreds();
+  const merged = { ...current, ...patch };
+  await Preferences.set({ key: KEY_SAVED, value: JSON.stringify(merged) });
+}
+
+export async function forgetCreds(): Promise<void> {
+  await Preferences.remove({ key: KEY_SAVED });
+}
+
 export interface DeviceInfoResponse {
   uuid: string;
   name: string;

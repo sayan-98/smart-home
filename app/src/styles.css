@@ -77,6 +77,10 @@ body {
 }
 
 .pane {
+  /* flex:1 is the link in the chain, not just display:flex. Without it the
+     pane sizes to its content and the device card inside has no leftover
+     height to claim, so the grid stays squashed at the top of the screen. */
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -182,9 +186,13 @@ code {
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  /* 1fr rows so the tiles divide the leftover height between them, with a
-     floor so they never squash to nothing when many devices are present. */
-  grid-auto-rows: minmax(110px, 1fr);
+  /* Rows have a floor AND a ceiling. 1fr rows would divide all the leftover
+     height among them, which on a 2560px tablet produced 500px tiles with a
+     void in the middle - technically filling the screen, visibly wrong.
+     Capping the row and letting align-content spread the remainder between
+     rows fills the space without distorting the tiles. */
+  grid-auto-rows: minmax(120px, 200px);
+  align-content: space-evenly;
   gap: 12px;
   flex: 1 1 auto;
   min-height: 0;
@@ -295,6 +303,24 @@ button.link {
 button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.saved-fill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px;
+  margin-bottom: 4px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+}
+.saved-fill .sub {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tabs {

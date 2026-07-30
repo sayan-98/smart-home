@@ -13,7 +13,14 @@ import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
 
 import { store } from '../api/store.js';
-import { ApiError, getApiBase } from '../api/transport.js';
+import {
+  ApiError,
+  forgetCreds,
+  getApiBase,
+  getSavedCreds,
+  rememberCreds,
+  type SavedCreds,
+} from '../api/transport.js';
 
 interface Props {
   onConnected: () => void;
@@ -39,17 +46,58 @@ export function Login({ onConnected }: Props): JSX.Element {
   const [password, setPassword] = useState('');
   const [mode, setMode] = useState<'login' | 'register'>('login');
 
+  const [saved, setSaved] = useState<SavedCreds>({});
+
   useEffect(() => {
     void getApiBase().then((stored) => setBase(stored || ''));
+    void getSavedCreds().then(setSaved);
   }, []);
+
+  /** Whether anything is remembered for the tab currently showing. */
+  const hasSavedForTab =
+    (tab === 'direct' && Boolean(saved.directHint)) ||
+    (tab === 'remote' && Boolean(saved.broker)) ||
+    (tab === 'account' && Boolean(saved.account));
+
+  function fillSaved(): void {
+    if (tab === 'direct' && saved.directHint) {
+      setHint(saved.directHint);
+    } else if (tab === 'remote' && saved.broker) {
+      setHost(saved.broker.host);
+      setPort(String(saved.broker.port));
+      setUser(saved.broker.username);
+      setPass(saved.broker.password);
+    } else if (tab === 'account' && saved.account) {
+      setBase(saved.account.base);
+      setEmail(saved.account.email);
+      setPassword(saved.account.password);
+    }
+    setError(null);
+  }
+
+  /** A short reminder of what will be filled, so it is never a blind tap. */
+  function savedLabel(): string {
+    if (tab === 'direct') return saved.directHint ?? '';
+    if (tab === 'remote' && saved.broker) {
+      return `${saved.broker.username} @ ${saved.broker.host}`;
+    }
+    if (tab === 'account' && saved.account) return saved.account.email;
+    return '';
+  }
 
   async function connectDirect(): Promise<void> {
     setError(null);
     setBusy(true);
     try {
       const ok = await store.connectDirect(hint);
-      if (ok) onConnected();
-      else setError(store.error ?? 'No device answered.');
+      if (ok) {
+        // Only remember what actually worked. Saving on submit would preserve
+        // typos and offer them back forever.
+        if (hint.trim()) await rememberCreds({ directHint: hint.trim() });
+        onConnected();
+      } else {
+        setError(store.error ?? 'No device answered.');
+      }
     } finally {
       setBusy(false);
     }
@@ -59,7 +107,7 @@ export function Login({ onConnected }: Props): JSX.Element {
     setError(null);
     setBusy(true);
     try {
-      const ok = await store.connectRemote({
+      const broker = {
         // People paste the whole URL from the broker's dashboard; strip it back
         // to a hostname rather than failing on it.
         host: host.trim().replace(/^\w+:\/\//, '').replace(/[/:].*$/, ''),
@@ -67,9 +115,14 @@ export function Login({ onConnected }: Props): JSX.Element {
         username: user.trim(),
         password: pass,
         path: '/mqtt',
-      });
-      if (ok) onConnected();
-      else setError(store.remoteDetail ?? 'Could not reach the broker.');
+      };
+      const ok = await store.connectRemote(broker);
+      if (ok) {
+        await rememberCreds({ broker });
+        onConnected();
+      } else {
+        setError(store.remoteDetail ?? 'Could not reach the broker.');
+      }
     } finally {
       setBusy(false);
     }
@@ -95,6 +148,7 @@ export function Login({ onConnected }: Props): JSX.Element {
       const { setApiBase, setToken } = await import('../api/transport.js');
       await setApiBase(url);
       await setToken(body.token);
+      await rememberCreds({ account: { base: url, email: email.trim(), password } });
       await store.init();
       onConnected();
     } catch (err) {
@@ -143,6 +197,26 @@ export function Login({ onConnected }: Props): JSX.Element {
             Account
           </button>
         </div>
+
+        {/* Offered on whichever tab has something remembered, and labelled with
+            what it will fill so it is never a blind tap. */}
+        {hasSavedForTab && (
+          <div className="saved-fill">
+            <button className="sec" onClick={fillSaved}>
+              Fill my saved details
+            </button>
+            <span className="sub">{savedLabel()}</span>
+            <button
+              className="link"
+              onClick={() => {
+                void forgetCreds();
+                setSaved({});
+              }}
+            >
+              Forget
+            </button>
+          </div>
+        )}
 
         {tab === 'direct' ? (
           <>
