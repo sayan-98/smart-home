@@ -19,7 +19,7 @@
 // ---------------------------------------------------------------------------
 import { Preferences } from '@capacitor/preferences';
 
-export type Mode = 'lan' | 'cloud' | 'offline';
+export type Mode = 'lan' | 'remote' | 'cloud' | 'offline';
 
 export interface DeviceEndpoint {
   uuid: string;
@@ -49,6 +49,33 @@ export async function getDirectBase(): Promise<string | null> {
 export async function setDirectBase(base: string | null): Promise<void> {
   if (base) await Preferences.set({ key: KEY_DIRECT, value: base.replace(/\/+$/, '') });
   else await Preferences.remove({ key: KEY_DIRECT });
+}
+
+// --- broker (control from anywhere) ---------------------------------------
+
+const KEY_BROKER = 'sh.broker';
+
+export interface StoredBroker {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  path: string;
+}
+
+export async function getBroker(): Promise<StoredBroker | null> {
+  const raw = (await Preferences.get({ key: KEY_BROKER })).value;
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as StoredBroker;
+  } catch {
+    return null;
+  }
+}
+
+export async function setBroker(broker: StoredBroker | null): Promise<void> {
+  if (broker) await Preferences.set({ key: KEY_BROKER, value: JSON.stringify(broker) });
+  else await Preferences.remove({ key: KEY_BROKER });
 }
 
 export interface DeviceInfoResponse {

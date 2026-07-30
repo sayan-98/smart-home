@@ -26,19 +26,23 @@
 import { Network } from '@capacitor/network';
 import { io, type Socket } from 'socket.io-client';
 
+import { MqttLink, type BrokerConfig, type RemoteDevice } from './mqttLink.js';
 import {
   ApiError,
   cloud,
   discoverDirect,
   getApiBase,
+  getBroker,
   getDirectBase,
   getToken,
   lan,
   loadEndpoints,
   probeLan,
   rememberEndpoint,
+  setBroker,
   setDirectBase,
   type Mode,
+  type StoredBroker,
 } from './transport.js';
 
 export interface Relay {
@@ -111,8 +115,15 @@ class Store {
   aiEnabled = false;
   error: string | null = null;
 
+  /** Set when controlling through a broker from outside the house. */
+  remote = false;
+  remoteDetail: string | null = null;
+
   private socket: Socket | null = null;
   private ws: WebSocket | null = null;
+  private link: MqttLink | null = null;
+  /** uuid -> homeId, needed to address command topics. */
+  private homeOf = new Map<string, string>();
   private listeners = new Set<Listener>();
   private queue: QueuedCommand[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -141,6 +152,14 @@ class Store {
   /** Returns true when a session (direct or cloud) is active. */
   async init(): Promise<boolean> {
     this.disposed = false;
+
+    // A broker session is tried first: it is the only mode that works from
+    // outside the house, and it costs nothing to fall back from.
+    const broker = await getBroker();
+    if (broker) {
+      this.startRemote(broker);
+      return true;
+    }
 
     const directBase = await getDirectBase();
     if (directBase) {
@@ -175,6 +194,99 @@ class Store {
     this.socket = null;
     this.ws?.close();
     this.ws = null;
+    this.link?.disconnect();
+    this.link = null;
+  }
+
+  // --- remote mode (broker) ------------------------------------------------
+
+  /**
+   * Connects through a broker. This is the only mode that reaches the house
+   * from outside it: both the device and this app dial OUT to the broker, so
+   * no port forwarding, static IP or public endpoint is involved.
+   */
+  async connectRemote(broker: StoredBroker): Promise<boolean> {
+    await setBroker(broker);
+    this.startRemote(broker);
+
+    // Wait briefly for a verdict so the UI can report a bad password instead of
+    // silently sitting on a login screen.
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 400));
+      if (this.link?.connected) return true;
+      if (this.remoteDetail) return false;
+    }
+    return this.link?.connected ?? false;
+  }
+
+  private startRemote(broker: BrokerConfig): void {
+    this.remote = true;
+    this.direct = false;
+    this.remoteDetail = null;
+
+    this.link?.disconnect();
+    this.link = new MqttLink({
+      onStatus: (connected, detail) => {
+        this.mode = connected ? 'remote' : 'offline';
+        this.remoteDetail = connected ? null : (detail ?? null);
+        if (connected) {
+          this.setError(null);
+          void this.flushQueue();
+        } else if (detail && detail !== 'reconnecting') {
+          this.setError(detail);
+        }
+        this.emit();
+      },
+      onDevices: (devices) => this.applyRemoteDevices(devices),
+    });
+
+    this.link.connect(broker);
+  }
+
+  /** Rebuilds the device list from what the broker replayed. */
+  private applyRemoteDevices(devices: Map<string, RemoteDevice>): void {
+    this.devices = [...devices.values()].map((d) => {
+      this.homeOf.set(d.uuid, d.homeId);
+      return {
+        id: d.uuid,
+        uuid: d.uuid,
+        name: d.uuid,
+        online: d.online,
+        firmwareVersion: d.firmware ?? '',
+        rssi: null,
+        lastBrownout: false,
+        lastIp: null,
+        relays: [...d.channels.values()]
+          .sort((a, b) => a.channel - b.channel)
+          .map((c) => ({
+            id: `${d.uuid}:${c.channel}`,
+            channel: c.channel,
+            name: c.name,
+            icon: c.icon,
+            state: c.state,
+            source: c.source,
+            rev: c.rev,
+            enabled: c.enabled,
+            groupId: c.group,
+            changedAt: '',
+          })),
+      };
+    });
+
+    this.homes = [{ id: 'remote', name: 'My Home', role: 'OWNER' }];
+    this.activeHomeId = 'remote';
+    this.emit();
+  }
+
+  async forgetRemote(): Promise<void> {
+    await setBroker(null);
+    this.link?.disconnect();
+    this.link = null;
+    this.remote = false;
+    this.devices = [];
+    this.homes = [];
+    this.mode = 'offline';
+    this.emit();
   }
 
   // --- direct mode ---------------------------------------------------------
@@ -451,6 +563,9 @@ class Store {
   }
 
   async refreshHomes(): Promise<void> {
+    // Remote state is pushed by the broker's retained messages; there is
+    // nothing to pull.
+    if (this.remote) return;
     if (this.direct) return this.refreshDirectState();
     try {
       const me = await cloud<{ homes: Home[] }>('/api/auth/me');
@@ -470,6 +585,12 @@ class Store {
   }
 
   async refreshDevices(): Promise<void> {
+    if (this.remote) {
+      // Nudge every known device to republish, for the rare case where a
+      // retained message was missed.
+      for (const [uuid, homeId] of this.homeOf) this.link?.requestSnapshot(homeId, uuid);
+      return;
+    }
     if (this.direct) return this.refreshDirectState();
     if (!this.activeHomeId) return;
     try {
@@ -526,6 +647,22 @@ class Store {
     channel: number | 'all',
     action: 'on' | 'off' | 'toggle',
   ): Promise<void> {
+    if (this.remote && this.link) {
+      const homeId = this.homeOf.get(device.uuid) ?? 'unclaimed';
+      const relay = device.relays.find((r) => r.channel === channel);
+      // Carry the revision so a command sent over a slow mobile link cannot
+      // undo a wall-switch press that happened while it was in flight.
+      const ok = this.link.publishCommand(
+        homeId,
+        device.uuid,
+        channel,
+        action,
+        relay ? relay.rev + 1 : undefined,
+      );
+      if (!ok) throw new ApiError(0, 'Not connected to the broker');
+      return;
+    }
+
     if (this.direct && this.directBase) {
       await lan(this.directBase, `/api/relay/${channel}`, {
         method: 'POST',

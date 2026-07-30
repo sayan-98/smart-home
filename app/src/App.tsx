@@ -25,9 +25,11 @@ function ModeBadge(): JSX.Element {
   const label =
     store.mode === 'lan'
       ? 'Direct - on your Wi-Fi'
-      : store.mode === 'cloud'
-        ? 'Cloud'
-        : 'Offline';
+      : store.mode === 'remote'
+        ? 'Remote - via broker'
+        : store.mode === 'cloud'
+          ? 'Cloud'
+          : 'Offline';
   return <span className={`badge ${store.mode}`}>{label}</span>;
 }
 
@@ -133,7 +135,9 @@ export function App(): JSX.Element {
   }, []);
 
   async function onLogout(): Promise<void> {
-    if (store.direct) {
+    if (store.remote) {
+      await store.forgetRemote();
+    } else if (store.direct) {
       await store.forgetDirect();
     } else {
       await setToken(null);

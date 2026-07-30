@@ -20,12 +20,18 @@ interface Props {
 }
 
 export function Login({ onConnected }: Props): JSX.Element {
-  const [tab, setTab] = useState<'direct' | 'account'>('direct');
+  const [tab, setTab] = useState<'direct' | 'remote' | 'account'>('direct');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // direct
   const [hint, setHint] = useState('');
+
+  // remote (broker)
+  const [host, setHost] = useState('');
+  const [port, setPort] = useState('8884');
+  const [user, setUser] = useState('');
+  const [pass, setPass] = useState('');
 
   // account
   const [base, setBase] = useState('');
@@ -44,6 +50,26 @@ export function Login({ onConnected }: Props): JSX.Element {
       const ok = await store.connectDirect(hint);
       if (ok) onConnected();
       else setError(store.error ?? 'No device answered.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function connectRemote(): Promise<void> {
+    setError(null);
+    setBusy(true);
+    try {
+      const ok = await store.connectRemote({
+        // People paste the whole URL from the broker's dashboard; strip it back
+        // to a hostname rather than failing on it.
+        host: host.trim().replace(/^\w+:\/\//, '').replace(/[/:].*$/, ''),
+        port: Number(port) || 8884,
+        username: user.trim(),
+        password: pass,
+        path: '/mqtt',
+      });
+      if (ok) onConnected();
+      else setError(store.remoteDetail ?? 'Could not reach the broker.');
     } finally {
       setBusy(false);
     }
@@ -99,6 +125,15 @@ export function Login({ onConnected }: Props): JSX.Element {
             This Wi-Fi
           </button>
           <button
+            className={`tab ${tab === 'remote' ? 'act' : ''}`}
+            onClick={() => {
+              setTab('remote');
+              setError(null);
+            }}
+          >
+            Anywhere
+          </button>
+          <button
             className={`tab ${tab === 'account' ? 'act' : ''}`}
             onClick={() => {
               setTab('account');
@@ -136,6 +171,59 @@ export function Login({ onConnected }: Props): JSX.Element {
               Leave the box empty to search automatically. If the device is still in setup
               mode, join its <code>SmartHome-XXXX</code> Wi-Fi first - it answers on{' '}
               <code>192.168.4.1</code>.
+            </p>
+          </>
+        ) : tab === 'remote' ? (
+          <>
+            <p className="sub">
+              Control your home from anywhere - office, travel, mobile data. Your device and
+              this app both connect out to a broker, so no port forwarding or fixed IP is
+              needed.
+            </p>
+
+            <label>Broker host</label>
+            <input
+              value={host}
+              onChange={(e) => setHost(e.target.value)}
+              placeholder="abc123.s1.eu.hivemq.cloud"
+              autoCapitalize="off"
+              autoCorrect="off"
+            />
+
+            <label>WebSocket port</label>
+            <input
+              value={port}
+              onChange={(e) => setPort(e.target.value)}
+              inputMode="numeric"
+              placeholder="8884"
+            />
+
+            <label>Username</label>
+            <input
+              value={user}
+              onChange={(e) => setUser(e.target.value)}
+              autoCapitalize="off"
+              autoCorrect="off"
+            />
+
+            <label>Password</label>
+            <input
+              value={pass}
+              onChange={(e) => setPass(e.target.value)}
+              type="password"
+              onKeyDown={(e) => e.key === 'Enter' && void connectRemote()}
+            />
+
+            {error && <div className="err">{error}</div>}
+
+            <button disabled={busy || !host || !user || !pass} onClick={() => void connectRemote()}>
+              {busy ? 'Connecting...' : 'Connect'}
+            </button>
+
+            <p className="sub hint">
+              Use the <b>WebSocket</b> port, not the MQTT one - 8884 on HiveMQ Cloud, not 8883.
+              The device must be given the same broker details, and it needs internet at home
+              that stays on while you are out.
             </p>
           </>
         ) : (
