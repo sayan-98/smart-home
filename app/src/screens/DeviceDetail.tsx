@@ -42,11 +42,9 @@ export function DeviceDetail({ device, onClose }: Props): JSX.Element {
     if (!name) return;
     setSaving(true);
     try {
-      await cloud(`/api/devices/${device.id}/relay/${channel}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ name }),
-      });
-      await store.refreshDevices();
+      // The store routes this to the device directly or via the backend,
+      // depending on which mode the app is in.
+      await store.rename(device.id, channel, name);
       // Renaming changes what you say to Alexa, and Alexa caches the old name.
       setNote('Saved. Say "Alexa, discover devices" so the new name works by voice.');
     } catch {
@@ -60,11 +58,8 @@ export function DeviceDetail({ device, onClose }: Props): JSX.Element {
     setRestore({ ...restore, [channel]: mode });
     try {
       // The device owns this setting - it has to work when the device boots
-      // with no network at all - so the backend only forwards it.
-      await cloud(`/api/devices/${device.id}/relay/${channel}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ restore: mode }),
-      });
+      // with no network at all - so this only forwards it.
+      await store.setRestore(device.id, channel, mode);
       setNote(`Channel ${channel + 1} will "${RESTORE_LABEL[mode]}" after power returns.`);
     } catch {
       setNote('Could not reach the device.');

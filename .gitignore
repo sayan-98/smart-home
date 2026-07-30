@@ -28,7 +28,14 @@ coverage/
 npm-debug.log*
 
 # --- Capacitor / Android ---
-app/android/
+# app/android/ IS committed. It carries hand-edited files that `cap add android`
+# would otherwise regenerate away - notably the network security config that
+# permits cleartext HTTP to the ESP32 on the LAN. Only build output is ignored.
+app/android/app/build/
+app/android/build/
+app/android/.gradle/
+app/android/local.properties
+app/android/capacitor-cordova-android-plugins/
 app/ios/
 app/.capacitor/
 *.apk

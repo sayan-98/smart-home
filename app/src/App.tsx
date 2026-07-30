@@ -9,7 +9,7 @@ import { useEffect, useSyncExternalStore, useState } from 'react';
 import type { JSX } from 'react';
 
 import { store, type Device, type Relay } from './api/store.js';
-import { setApiBase, setToken } from './api/transport.js';
+import { setToken } from './api/transport.js';
 import { Login } from './screens/Login.js';
 import { DeviceDetail } from './screens/DeviceDetail.js';
 import { AiBar } from './screens/AiBar.js';
@@ -126,23 +126,19 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     void (async () => {
-      await store.init();
-      setAuthed(store.homes.length > 0);
+      setAuthed(await store.init());
       setReady(true);
     })();
     return () => store.dispose();
   }, []);
 
-  async function onLogin(base: string, token: string): Promise<void> {
-    await setApiBase(base);
-    await setToken(token);
-    await store.init();
-    setAuthed(true);
-  }
-
   async function onLogout(): Promise<void> {
-    await setToken(null);
-    store.dispose();
+    if (store.direct) {
+      await store.forgetDirect();
+    } else {
+      await setToken(null);
+      store.dispose();
+    }
     setAuthed(false);
   }
 
@@ -154,7 +150,7 @@ export function App(): JSX.Element {
     );
   }
 
-  if (!authed) return <Login onLogin={onLogin} />;
+  if (!authed) return <Login onConnected={() => setAuthed(true)} />;
 
   const home = store.homes.find((h) => h.id === store.activeHomeId);
   const onlineCount = store.devices.filter((d) => d.online).length;
@@ -175,7 +171,7 @@ export function App(): JSX.Element {
             Refresh
           </button>
           <button className="sec" onClick={() => void onLogout()}>
-            Sign out
+            {store.direct ? 'Disconnect' : 'Sign out'}
           </button>
         </div>
       </header>

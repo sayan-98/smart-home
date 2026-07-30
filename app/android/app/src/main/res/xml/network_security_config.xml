@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 9+ blocks cleartext HTTP by default. This app needs it: the whole
+  point of direct mode is talking to an ESP32 on your own Wi-Fi, and that device
+  serves plain HTTP (docs/API.md - TLS on the LAN path is Phase 4).
+
+  Android's network security config cannot express IP ranges, only exact hosts
+  and domains, and the device's address is assigned by your router - so there is
+  no way to write "private ranges only" here. The honest options are a blanket
+  cleartext permit or no direct mode at all.
+
+  What that means in practice: this app will not refuse a plain-HTTP request to
+  any host. It only ever makes them to an address you entered yourself, or to
+  the mDNS/SoftAP addresses of a Smart Home device. Cloud traffic goes to an
+  https:// base URL and is unaffected.
+
+  When the firmware gains LAN TLS, narrow this to a domain-config for
+  *.local and delete the base-config.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

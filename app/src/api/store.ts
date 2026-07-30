@@ -1,17 +1,27 @@
 // ---------------------------------------------------------------------------
 //  store.ts - app state, connection management and the outbound command queue.
 //
-//  Two behaviours here earn their keep:
+//  TWO MODES, and the distinction matters:
+//
+//    DIRECT - the app talks straight to the ESP32's own REST + WebSocket
+//             server. No account, no backend, no broker, no internet. This is
+//             the right mode for one board on your own Wi-Fi, and it keeps
+//             working when everything else is down.
+//
+//    CLOUD  - REST + Socket.IO against the backend. Needed only for control
+//             from outside the house, multiple devices, or the AI features.
+//
+//  Two behaviours below earn their keep in both modes:
 //
 //  1. OPTIMISTIC UI WITH RECONCILIATION. Tapping a tile flips it immediately,
-//     because a switch that waits 300 ms for a round trip feels broken. The
-//     real state then arrives over the socket and overwrites the guess. If the
-//     command failed, the tile flips back - visibly, so you know it did not
-//     happen rather than being quietly lied to.
+//     because a switch that waits for a round trip feels broken. The real state
+//     then arrives over the socket and overwrites the guess. If the command
+//     failed, the tile flips back - visibly, so you know it did not happen
+//     rather than being quietly lied to.
 //
-//  2. A COMMAND QUEUE. Commands issued while disconnected are held and replayed
-//     on reconnect, newest-per-channel only. Replaying three stale toggles for
-//     one socket would be worse than dropping two of them.
+//  2. A COMMAND QUEUE. Commands issued while disconnected are replayed on
+//     reconnect, newest-per-channel only. Replaying three stale toggles for one
+//     socket would be worse than dropping two of them.
 // ---------------------------------------------------------------------------
 import { Network } from '@capacitor/network';
 import { io, type Socket } from 'socket.io-client';
@@ -19,12 +29,15 @@ import { io, type Socket } from 'socket.io-client';
 import {
   ApiError,
   cloud,
+  discoverDirect,
   getApiBase,
+  getDirectBase,
   getToken,
   lan,
   loadEndpoints,
   probeLan,
   rememberEndpoint,
+  setDirectBase,
   type Mode,
 } from './transport.js';
 
@@ -69,8 +82,25 @@ interface QueuedCommand {
   at: number;
 }
 
+/** Shape of one channel in the device's own /api/state response. */
+interface LocalChannel {
+  channel: number;
+  name: string;
+  icon: string;
+  state: boolean;
+  source: string;
+  rev: number;
+  enabled: boolean;
+  group: number;
+  changedAt: number;
+}
+
 class Store {
   mode: Mode = 'offline';
+  /** Set when running without a backend. */
+  direct = false;
+  directBase: string | null = null;
+
   lanBase: string | null = null;
   lanUuid: string | null = null;
 
@@ -80,12 +110,13 @@ class Store {
 
   aiEnabled = false;
   error: string | null = null;
-  busy = false;
 
   private socket: Socket | null = null;
+  private ws: WebSocket | null = null;
   private listeners = new Set<Listener>();
   private queue: QueuedCommand[] = [];
-  private probeTimer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setInterval> | null = null;
+  private disposed = false;
 
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
@@ -94,32 +125,6 @@ class Store {
 
   private emit(): void {
     for (const fn of this.listeners) fn();
-  }
-
-  // --- lifecycle -----------------------------------------------------------
-
-  async init(): Promise<void> {
-    const token = await getToken();
-    if (!token) {
-      this.mode = 'offline';
-      this.emit();
-      return;
-    }
-
-    await this.refreshHomes();
-    await this.connectSocket();
-
-    // Re-probe the LAN periodically and on any network change: walking in the
-    // front door should switch the app to direct control without a restart.
-    this.probeTimer = setInterval(() => void this.probeLanPath(), 30_000);
-    void Network.addListener('networkStatusChange', () => void this.probeLanPath());
-    await this.probeLanPath();
-  }
-
-  dispose(): void {
-    if (this.probeTimer) clearInterval(this.probeTimer);
-    this.socket?.disconnect();
-    this.socket = null;
   }
 
   private setError(message: string | null): void {
@@ -131,7 +136,216 @@ class Store {
     this.setError(null);
   }
 
-  // --- connection ----------------------------------------------------------
+  // --- lifecycle -----------------------------------------------------------
+
+  /** Returns true when a session (direct or cloud) is active. */
+  async init(): Promise<boolean> {
+    this.disposed = false;
+
+    const directBase = await getDirectBase();
+    if (directBase) {
+      const ok = await this.startDirect(directBase);
+      if (ok) return true;
+      // Saved address no longer answers - fall through so the user can
+      // re-discover or sign in, rather than sitting on a dead screen.
+      this.setError('The saved device did not answer. Is it powered on?');
+    }
+
+    const token = await getToken();
+    if (!token) {
+      this.mode = 'offline';
+      this.emit();
+      return false;
+    }
+
+    await this.refreshHomes();
+    await this.connectSocket();
+
+    this.timer = setInterval(() => void this.probeLanPath(), 30_000);
+    void Network.addListener('networkStatusChange', () => void this.probeLanPath());
+    await this.probeLanPath();
+    return this.homes.length > 0;
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    this.socket?.disconnect();
+    this.socket = null;
+    this.ws?.close();
+    this.ws = null;
+  }
+
+  // --- direct mode ---------------------------------------------------------
+
+  /** Probes an address and, if a device answers, switches into direct mode. */
+  async connectDirect(hint?: string): Promise<boolean> {
+    const found = await discoverDirect(hint);
+    if (!found) {
+      this.setError(
+        'No device answered. Check that this tablet is on the same Wi-Fi, and try the IP address shown on the device page.',
+      );
+      return false;
+    }
+    await setDirectBase(found.base);
+    return this.startDirect(found.base);
+  }
+
+  private async startDirect(base: string): Promise<boolean> {
+    try {
+      const info = await lan<{
+        uuid: string;
+        name: string;
+        firmware: string;
+        rssi: number;
+        ip: string;
+      }>(base, '/api/info');
+
+      this.direct = true;
+      this.directBase = base;
+      this.homes = [{ id: 'local', name: info.name || 'Smart Home', role: 'OWNER' }];
+      this.activeHomeId = 'local';
+      this.aiEnabled = false; // AI lives in the backend, by design
+
+      await this.refreshDirectState(info);
+      this.openDirectSocket(base);
+      this.mode = 'lan';
+      this.emit();
+      return true;
+    } catch {
+      this.direct = false;
+      this.directBase = null;
+      return false;
+    }
+  }
+
+  private async refreshDirectState(info?: {
+    uuid: string;
+    name: string;
+    firmware: string;
+    rssi: number;
+    ip: string;
+  }): Promise<void> {
+    if (!this.directBase) return;
+
+    const meta =
+      info ??
+      (await lan<{ uuid: string; name: string; firmware: string; rssi: number; ip: string }>(
+        this.directBase,
+        '/api/info',
+      ));
+
+    const snapshot = await lan<{ channels: LocalChannel[] }>(this.directBase, '/api/state');
+
+    this.devices = [
+      {
+        id: meta.uuid,
+        uuid: meta.uuid,
+        name: meta.name || 'Smart Home Node',
+        online: true,
+        firmwareVersion: meta.firmware,
+        rssi: meta.rssi ?? null,
+        lastBrownout: false,
+        lastIp: meta.ip ?? null,
+        relays: snapshot.channels.map((c) => ({
+          id: `${meta.uuid}:${c.channel}`,
+          channel: c.channel,
+          name: c.name,
+          icon: c.icon,
+          state: c.state,
+          source: c.source,
+          rev: c.rev,
+          enabled: c.enabled,
+          groupId: c.group,
+          changedAt: String(c.changedAt),
+        })),
+      },
+    ];
+    this.emit();
+  }
+
+  /**
+   * The device's own WebSocket. This is what makes a wall-switch press or an
+   * Alexa command appear on the tablet instantly, with no cloud involved.
+   */
+  private openDirectSocket(base: string): void {
+    this.ws?.close();
+    const url = base.replace(/^http/, 'ws') + '/ws';
+
+    try {
+      const ws = new WebSocket(url);
+      this.ws = ws;
+
+      ws.onopen = () => {
+        this.mode = 'lan';
+        void this.flushQueue();
+        this.emit();
+      };
+
+      ws.onmessage = (evt) => {
+        try {
+          const msg = JSON.parse(String(evt.data)) as {
+            type: string;
+            channel?: number;
+            state?: boolean;
+            source?: string;
+            rev?: number;
+            data?: { channels: LocalChannel[] };
+          };
+
+          if (msg.type === 'relay' && msg.channel !== undefined) {
+            this.applyRelayState(
+              this.devices[0]?.id ?? '',
+              msg.channel,
+              Boolean(msg.state),
+              msg.source ?? 'unknown',
+              msg.rev ?? 0,
+            );
+          } else if (msg.type === 'state' && msg.data) {
+            const device = this.devices[0];
+            if (device) {
+              for (const c of msg.data.channels) {
+                this.applyRelayState(device.id, c.channel, c.state, c.source, c.rev);
+              }
+            }
+          }
+        } catch {
+          /* ignore malformed frames */
+        }
+      };
+
+      ws.onclose = () => {
+        if (this.disposed || !this.direct) return;
+        this.mode = 'offline';
+        this.emit();
+        // The device reboots, Wi-Fi drops, the tablet sleeps. Just keep trying.
+        setTimeout(() => {
+          if (!this.disposed && this.directBase) this.openDirectSocket(this.directBase);
+        }, 3000);
+      };
+
+      ws.onerror = () => ws.close();
+    } catch {
+      setTimeout(() => {
+        if (!this.disposed && this.directBase) this.openDirectSocket(this.directBase);
+      }, 3000);
+    }
+  }
+
+  async forgetDirect(): Promise<void> {
+    await setDirectBase(null);
+    this.direct = false;
+    this.directBase = null;
+    this.devices = [];
+    this.homes = [];
+    this.ws?.close();
+    this.ws = null;
+    this.mode = 'offline';
+    this.emit();
+  }
+
+  // --- cloud mode ----------------------------------------------------------
 
   private async connectSocket(): Promise<void> {
     const base = await getApiBase();
@@ -157,7 +371,6 @@ class Store {
       this.emit();
     });
 
-    // The authoritative update. Whatever the UI guessed, this is the truth.
     this.socket.on(
       'relay:changed',
       (evt: { deviceId: string; channel: number; state: boolean; source: string; rev: number }) => {
@@ -174,16 +387,14 @@ class Store {
     });
   }
 
-  /** Detects whether we can reach a device directly on this network. */
+  /** In cloud mode, detects whether a device is also reachable directly. */
   private async probeLanPath(): Promise<void> {
-    const endpoints = await loadEndpoints();
+    if (this.direct) return;
     const first = this.devices[0];
     if (!first) return;
 
-    const ep = endpoints[first.uuid] ?? {
-      uuid: first.uuid,
-      lanIp: first.lastIp ?? undefined,
-    };
+    const endpoints = await loadEndpoints();
+    const ep = endpoints[first.uuid] ?? { uuid: first.uuid, lanIp: first.lastIp ?? undefined };
 
     const base = await probeLan(ep);
     const wasLan = this.mode === 'lan';
@@ -201,7 +412,21 @@ class Store {
     this.emit();
   }
 
-  // --- state ---------------------------------------------------------------
+  private async refreshLanState(): Promise<void> {
+    if (!this.lanBase || !this.lanUuid) return;
+    try {
+      const snapshot = await lan<{ channels: LocalChannel[] }>(this.lanBase, '/api/state');
+      const device = this.devices.find((d) => d.uuid === this.lanUuid);
+      if (!device) return;
+      for (const c of snapshot.channels) {
+        this.applyRelayState(device.id, c.channel, c.state, c.source, c.rev);
+      }
+    } catch {
+      /* fall back to whatever the cloud last reported */
+    }
+  }
+
+  // --- shared state --------------------------------------------------------
 
   private applyRelayState(
     deviceId: string,
@@ -210,13 +435,13 @@ class Store {
     source: string,
     rev: number,
   ): void {
-    const device = this.devices.find((d) => d.id === deviceId);
+    const device = this.devices.find((d) => d.id === deviceId) ?? this.devices[0];
     const relay = device?.relays.find((r) => r.channel === channel);
     if (!relay) return;
 
-    // Revisions are monotonic and assigned by the device. An out-of-order
-    // message - which retained MQTT and reconnect snapshots produce routinely -
-    // must not overwrite something newer.
+    // Revisions are monotonic and assigned by the device. Out-of-order messages
+    // - which retained MQTT and reconnect snapshots produce routinely - must
+    // not overwrite something newer.
     if (rev !== 0 && rev < relay.rev) return;
 
     relay.state = state;
@@ -226,6 +451,7 @@ class Store {
   }
 
   async refreshHomes(): Promise<void> {
+    if (this.direct) return this.refreshDirectState();
     try {
       const me = await cloud<{ homes: Home[] }>('/api/auth/me');
       this.homes = me.homes;
@@ -244,36 +470,18 @@ class Store {
   }
 
   async refreshDevices(): Promise<void> {
+    if (this.direct) return this.refreshDirectState();
     if (!this.activeHomeId) return;
     try {
       this.devices = await cloud<Device[]>(`/api/devices?homeId=${this.activeHomeId}`);
-
       // Cache each device's LAN address so direct control works next time even
-      // if mDNS is unavailable, which it usually is inside a WebView.
+      // when mDNS is unavailable, which it usually is inside a WebView.
       for (const d of this.devices) {
         if (d.lastIp) await rememberEndpoint({ uuid: d.uuid, lanIp: d.lastIp });
       }
       this.emit();
     } catch (err) {
       this.setError(err instanceof ApiError ? err.message : 'Could not load devices');
-    }
-  }
-
-  /** In LAN mode the device itself is the source of truth. */
-  private async refreshLanState(): Promise<void> {
-    if (!this.lanBase || !this.lanUuid) return;
-    try {
-      const snapshot = await lan<{ channels: { channel: number; state: boolean; source: string; rev: number }[] }>(
-        this.lanBase,
-        '/api/state',
-      );
-      const device = this.devices.find((d) => d.uuid === this.lanUuid);
-      if (!device) return;
-      for (const ch of snapshot.channels) {
-        this.applyRelayState(device.id, ch.channel, ch.state, ch.source, ch.rev);
-      }
-    } catch {
-      // Fall back to whatever the cloud last told us.
     }
   }
 
@@ -287,7 +495,6 @@ class Store {
     const previous = relay.state;
     const action = previous ? 'off' : 'on';
 
-    // Optimistic: flip now, reconcile when the truth arrives.
     relay.state = !previous;
     relay.source = 'app';
     this.emit();
@@ -295,8 +502,8 @@ class Store {
     try {
       await this.send(device, channel, action);
     } catch (err) {
-      // Visibly revert. Silently leaving the wrong state on screen is worse
-      // than showing that the command failed.
+      // Visibly revert. Leaving the wrong state on screen is worse than showing
+      // that the command failed.
       relay.state = previous;
       this.emit();
       this.setError(err instanceof ApiError ? err.message : 'Command failed');
@@ -319,8 +526,16 @@ class Store {
     channel: number | 'all',
     action: 'on' | 'off' | 'toggle',
   ): Promise<void> {
-    // Prefer the direct path. It is faster, and it is the only one that works
-    // when the internet is down.
+    if (this.direct && this.directBase) {
+      await lan(this.directBase, `/api/relay/${channel}`, {
+        method: 'POST',
+        body: JSON.stringify({ action }),
+      });
+      return;
+    }
+
+    // Prefer the direct path even in cloud mode: it is faster, and it is the
+    // only one that works when the internet is down.
     if (this.mode === 'lan' && this.lanBase && this.lanUuid === device.uuid) {
       const endpoints = await loadEndpoints();
       await lan(
@@ -331,16 +546,44 @@ class Store {
       );
       return;
     }
+
     await cloud(`/api/devices/${device.id}/relay/${channel}`, {
       method: 'POST',
       body: JSON.stringify({ action }),
     });
   }
 
-  /**
-   * Replays queued commands, newest-per-channel only. Replaying three stale
-   * toggles for one socket would be worse than dropping two of them.
-   */
+  async rename(deviceId: string, channel: number, name: string): Promise<void> {
+    if (this.direct && this.directBase) {
+      await lan(this.directBase, '/api/config', {
+        method: 'POST',
+        body: JSON.stringify({ channels: [{ index: channel, name }] }),
+      });
+      await this.refreshDirectState();
+      return;
+    }
+    await cloud(`/api/devices/${deviceId}/relay/${channel}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    });
+    await this.refreshDevices();
+  }
+
+  async setRestore(deviceId: string, channel: number, restore: 'off' | 'on' | 'last'): Promise<void> {
+    if (this.direct && this.directBase) {
+      await lan(this.directBase, '/api/config', {
+        method: 'POST',
+        body: JSON.stringify({ channels: [{ index: channel, restore }] }),
+      });
+      return;
+    }
+    await cloud(`/api/devices/${deviceId}/relay/${channel}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ restore }),
+    });
+  }
+
+  /** Replays queued commands, newest-per-channel only. */
   private async flushQueue(): Promise<void> {
     if (this.queue.length === 0) return;
 
@@ -363,10 +606,6 @@ class Store {
 
   get queuedCount(): number {
     return this.queue.length;
-  }
-
-  get activeDevices(): Device[] {
-    return this.devices;
   }
 }
 

@@ -256,6 +256,27 @@ button:disabled {
   cursor: default;
 }
 
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 14px 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--dim);
+  font-weight: 550;
+  padding: 10px 16px;
+  min-height: 0;
+}
+.tab.act {
+  color: var(--fg);
+  border-bottom-color: var(--acc);
+}
+
 .chip {
   background: transparent;
   border: 1px solid var(--line);

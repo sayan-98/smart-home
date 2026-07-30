@@ -33,6 +33,70 @@ const LAN_TIMEOUT_MS = 1200;
 const KEY_ENDPOINTS = 'sh.endpoints';
 const KEY_TOKEN = 'sh.token';
 const KEY_API_BASE = 'sh.apiBase';
+const KEY_DIRECT = 'sh.directBase';
+
+// --- direct mode -----------------------------------------------------------
+//
+// One board on your own Wi-Fi does not need a cloud account. In direct mode the
+// app skips sign-in entirely and talks to the ESP32's own REST + WebSocket
+// server. No backend, no broker, no internet - and it keeps working when all
+// three are down. The cloud path stays available for control from outside.
+
+export async function getDirectBase(): Promise<string | null> {
+  return (await Preferences.get({ key: KEY_DIRECT })).value;
+}
+
+export async function setDirectBase(base: string | null): Promise<void> {
+  if (base) await Preferences.set({ key: KEY_DIRECT, value: base.replace(/\/+$/, '') });
+  else await Preferences.remove({ key: KEY_DIRECT });
+}
+
+export interface DeviceInfoResponse {
+  uuid: string;
+  name: string;
+  firmware: string;
+  relayCount: number;
+  hostname: string;
+  wifiConnected: boolean;
+  apActive: boolean;
+  ssid: string;
+  rssi: number;
+  ip: string;
+  claimed: boolean;
+  claimCode: string;
+  timeSynced: boolean;
+  time: string;
+}
+
+/**
+ * Finds a device on this network. Tries an explicit host first, then the mDNS
+ * name, then the SoftAP address a freshly-flashed board sits on.
+ *
+ * mDNS often fails inside an Android WebView even when the device is right
+ * there, which is why the raw IP is always offered as an alternative.
+ */
+export async function discoverDirect(
+  hint?: string,
+): Promise<{ base: string; info: DeviceInfoResponse } | null> {
+  const candidates: string[] = [];
+  if (hint?.trim()) {
+    const h = hint.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    candidates.push(`http://${h}`);
+  }
+  candidates.push('http://smarthome.local', 'http://192.168.4.1');
+
+  for (const base of candidates) {
+    try {
+      const res = await timedFetch(`${base}/api/info`, { method: 'GET' }, LAN_TIMEOUT_MS);
+      if (!res.ok) continue;
+      const info = (await res.json()) as DeviceInfoResponse;
+      if (info.uuid) return { base, info };
+    } catch {
+      // Not at this address; try the next.
+    }
+  }
+  return null;
+}
 
 // --- persisted settings ----------------------------------------------------
 
