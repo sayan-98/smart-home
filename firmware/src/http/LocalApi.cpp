@@ -21,6 +21,7 @@
 #include "device/DeviceInfo.h"
 #include "http/PortalPage.h"
 #include "log/Logger.h"
+#include "mqtt/MqttService.h"
 #include "net/TimeService.h"
 #include "net/WiFiService.h"
 #include "relay/RelayManager.h"
@@ -311,6 +312,13 @@ void handleDiag(AsyncWebServerRequest* req) {
   doc["wifi"] = WiFiService::isConnected();
   doc["rssi"] = WiFiService::rssi();
   doc["ip"] = WiFiService::localIp().toString();
+  // The portal has always had a row for this; it was rendering blank because
+  // the field was never sent. Whether the cloud link is up is exactly what you
+  // want to know when remote control is not working.
+  doc["mqtt"] = MqttService::isEnabled()
+                    ? (MqttService::isConnected() ? "connected" : "disconnected")
+                    : "disabled";
+  doc["mqttReconnects"] = MqttService::reconnectCount();
   // Uncalibrated on WROOM-32 and reads well above ambient. Useful only as a
   // trend line, never as a room temperature.
   doc["chipTempC"] = static_cast<int>(temperatureRead());
@@ -648,7 +656,12 @@ void LocalApi::begin() {
   g_server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
     AsyncWebServerResponse* res =
         req->beginResponse(200, "text/html; charset=utf-8", kPortalHtml);
-    res->addHeader("Cache-Control", "public, max-age=600");
+    // Deliberately not cached. This page is ~15 KB served from flash over a
+    // LAN, so caching saves nothing worth having - and it guarantees that
+    // after a firmware update the browser keeps running the OLD page. That
+    // failure is invisible and maddening: the device is healthy, the page
+    // renders, and the stale JavaScript underneath it misbehaves.
+    res->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     req->send(res);
   });
 
