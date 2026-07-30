@@ -52,6 +52,10 @@ export interface RemoteDevice {
   homeId: string;
   online: boolean;
   firmware?: string;
+  /** Current LAN address, learned from the heartbeat. */
+  ip?: string;
+  rssi?: number;
+  brownout?: boolean;
   channels: Map<number, RemoteChannel>;
 }
 
@@ -97,6 +101,10 @@ export class MqttLink {
       // what makes the app correct on open rather than after a poll.
       this.client?.subscribe(`${TOPIC_ROOT}/+/+/relay/+/state`, { qos: 1 });
       this.client?.subscribe(`${TOPIC_ROOT}/+/+/status`, { qos: 1 });
+      // The heartbeat carries the device's current LAN address. Without it you
+      // would have to hunt for the IP after every DHCP change just to open the
+      // device's own web page - the app itself never needs it.
+      this.client?.subscribe(`${TOPIC_ROOT}/+/+/diag`, { qos: 0 });
       this.events.onStatus(true);
     });
 
@@ -147,6 +155,17 @@ export class MqttLink {
       const d = this.device(homeId, uuid);
       d.online = Boolean(body.online);
       if (typeof body.fw === 'string') d.firmware = body.fw;
+      this.events.onDevices(this.devices);
+      return;
+    }
+
+    if (parts[3] === 'diag') {
+      const d = this.device(homeId, uuid);
+      if (typeof body.ip === 'string' && body.ip) d.ip = body.ip;
+      if (typeof body.rssi === 'number') d.rssi = body.rssi;
+      if (typeof body.brownout === 'boolean') d.brownout = body.brownout;
+      // A heartbeat is proof of life even if the retained status is stale.
+      d.online = true;
       this.events.onDevices(this.devices);
       return;
     }

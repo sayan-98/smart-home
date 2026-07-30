@@ -271,9 +271,11 @@ class Store {
         name: d.uuid,
         online: d.online,
         firmwareVersion: d.firmware ?? '',
-        rssi: null,
-        lastBrownout: false,
-        lastIp: null,
+        rssi: d.rssi ?? null,
+        lastBrownout: d.brownout ?? false,
+        // Learned from the heartbeat, so the address is never something you
+        // have to go looking for after a reboot.
+        lastIp: d.ip ?? null,
         relays: [...d.channels.values()]
           .sort((a, b) => a.channel - b.channel)
           .map((c) => ({

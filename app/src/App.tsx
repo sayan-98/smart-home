@@ -92,6 +92,17 @@ function DeviceCard({ device, onOpen }: { device: Device; onOpen: () => void }):
               : 'offline'}
             {device.room ? ` - ${device.room.name}` : ''}
           </p>
+          {/* The device reports its own address in every heartbeat, so its web
+              page is one tap away no matter how often DHCP reassigns it. You
+              should never have to go hunting for an IP. */}
+          {device.lastIp && (
+            <p className="sub">
+              web page:{' '}
+              <a href={`http://${device.lastIp}`} target="_blank" rel="noreferrer">
+                http://{device.lastIp}
+              </a>
+            </p>
+          )}
         </div>
         <div className="row">
           <button className="sec" onClick={() => void store.allOff(device.id)}>

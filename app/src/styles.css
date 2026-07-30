@@ -92,6 +92,9 @@ h3 {
   margin-top: 10px;
   line-height: 1.5;
 }
+a {
+  color: var(--acc);
+}
 code {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 13px;
