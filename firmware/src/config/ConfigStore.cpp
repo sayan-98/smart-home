@@ -115,7 +115,17 @@ void ConfigStore::loadDefaults() {
     // OFF is the safe default for mains sockets: a device that comes back from
     // a power cut should not silently re-energise an appliance.
     c.restore = RestoreMode::Off;
-    c.switchEnabled = true;
+    // OFF by default, and this matters more than it looks.
+    //
+    // An unconnected input pin only has the chip's weak (~45k) internal
+    // pull-up holding it. Next to eight switching relay coils that is not
+    // enough: the pins pick up coupled noise, the scanner reads it as a press,
+    // and mains sockets change state on their own with source="physical".
+    // Observed on real hardware before this default was flipped.
+    //
+    // Anyone who actually wires dry-contact switches turns this on per channel;
+    // nobody should have to turn it off to stop phantom switching.
+    c.switchEnabled = false;
     // Indian modular wall switches stay in position -> latching.
     c.switchMode = SwitchMode::Latching;
     c.switchInverted = false;

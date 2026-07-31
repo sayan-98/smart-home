@@ -666,6 +666,7 @@ class Store {
     device: Device,
     channel: number | 'all',
     action: 'on' | 'off' | 'toggle',
+    seconds?: number,
   ): Promise<void> {
     if (this.remote && this.link) {
       const homeId = this.homeOf.get(device.uuid) ?? 'unclaimed';
@@ -678,6 +679,7 @@ class Store {
         channel,
         action,
         relay ? relay.rev + 1 : undefined,
+        seconds,
       );
       if (!ok) throw new ApiError(0, 'Not connected to the broker');
       return;
@@ -686,7 +688,7 @@ class Store {
     if (this.direct && this.directBase) {
       await lan(this.directBase, `/api/relay/${channel}`, {
         method: 'POST',
-        body: JSON.stringify({ action }),
+        body: JSON.stringify(seconds !== undefined ? { action, seconds } : { action }),
       });
       return;
     }
@@ -738,6 +740,39 @@ class Store {
       method: 'PATCH',
       body: JSON.stringify({ restore }),
     });
+  }
+
+  // --- natural language ----------------------------------------------------
+
+  /**
+   * Runs one utterance in any language against the connected device.
+   * Validation happened in nl.ts; this only executes what survived it.
+   */
+  async runNl(text: string): Promise<{ reply: string; executed: number; understood: boolean }> {
+    const { interpret } = await import('./nl.js');
+    const { getGroqKey } = await import('./transport.js');
+
+    const device = this.devices[0];
+    if (!device) return { reply: 'No device connected.', executed: 0, understood: false };
+
+    const result = await interpret(
+      text,
+      device.relays
+        .filter((r) => r.enabled)
+        .map((r) => ({ channel: r.channel, name: r.name, state: r.state })),
+      await getGroqKey(),
+    );
+
+    let executed = 0;
+    for (const a of result.actions) {
+      try {
+        await this.send(device, a.channel, a.action, a.seconds);
+        executed++;
+      } catch {
+        /* connection hiccup - the state refresh will show the truth */
+      }
+    }
+    return { reply: result.reply, executed, understood: result.understood };
   }
 
   /** Replays queued commands, newest-per-channel only. */

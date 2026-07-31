@@ -462,6 +462,23 @@ td:first-child {
   border-radius: 12px;
 }
 
+/* --- voice / natural language -------------------------------------------- */
+
+.nl-status {
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--dim);
+}
+.nl-status.listening {
+  color: var(--acc);
+}
+.nl-status.ok {
+  color: var(--on);
+}
+.nl-status.err-text {
+  color: var(--warn);
+}
+
 /* --- help / user guide --------------------------------------------------- */
 
 .help {

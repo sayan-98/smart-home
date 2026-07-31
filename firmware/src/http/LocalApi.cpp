@@ -358,6 +358,57 @@ void handleDiag(AsyncWebServerRequest* req) {
   free(buf);
 }
 
+/// GET /api/pins - what each relay pin is actually doing, electrically.
+void handlePins(AsyncWebServerRequest* req) {
+  char* buf = static_cast<char*>(malloc(2048));
+  if (!buf) return sendError(req, 500, "out of memory");
+  RelayManager::toPinDiagnosticsJson(buf, 2048);
+  sendJson(req, 200, buf);
+  free(buf);
+}
+
+/// POST /api/selftest - walks every channel on then off, one at a time.
+///
+/// Deliberately sequential and slow. Switching eight coils together on an
+/// undersized supply browns the board out, and the reboot looks like a
+/// firmware fault; one at a time isolates a genuinely dead channel from a
+/// power problem that only appears under load.
+void handleSelfTest(AsyncWebServerRequest* req) {
+  if (!requireAuth(req)) return;
+
+  JsonDocument doc;
+  deserializeJson(doc, bodyOf(req));
+  const uint32_t dwellMs = doc["dwellMs"] | 700u;
+  if (dwellMs > 5000) return sendError(req, 400, "dwellMs too large");
+
+  // Run off-task: this takes seconds and must not block the HTTP stack.
+  static uint32_t s_dwell;
+  s_dwell = dwellMs;
+  xTaskCreate(
+      [](void*) {
+        SH_LOGW("test", "self test starting - %u channels",
+                static_cast<unsigned>(board::kChannelCount));
+        RelayManager::commandAll(Action::Off, Source::App);
+        vTaskDelay(pdMS_TO_TICKS(600));
+
+        for (uint8_t ch = 0; ch < board::kChannelCount; ++ch) {
+          RelayManager::command(ch, Action::On, Source::App);
+          vTaskDelay(pdMS_TO_TICKS(s_dwell));
+          const int level = RelayManager::rawPinLevel(ch);
+          SH_LOGW("test", "ch%u gpio%d -> ON, pin reads %s",
+                  static_cast<unsigned>(ch), board::kRelayPins[ch],
+                  level ? "HIGH" : "LOW");
+          RelayManager::command(ch, Action::Off, Source::App);
+          vTaskDelay(pdMS_TO_TICKS(300));
+        }
+        SH_LOGW("test", "self test complete");
+        vTaskDelete(nullptr);
+      },
+      "selftest", 3072, nullptr, 1, nullptr);
+
+  sendJson(req, 202, "{\"started\":true}");
+}
+
 void handleSchedulesGet(AsyncWebServerRequest* req) {
   char* buf = static_cast<char*>(malloc(kJsonBuf));
   if (!buf) return sendError(req, 500, "out of memory");
@@ -654,8 +705,14 @@ void LocalApi::begin() {
   g_server.addHandler(&g_ws);
 
   g_server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
-    AsyncWebServerResponse* res =
-        req->beginResponse(200, "text/html; charset=utf-8", kPortalHtml);
+    // Pointer + length overload, NOT the const char* one. The char* overload
+    // copies the whole ~20 KB page into a heap String first; at ~50% heap
+    // fragmentation that allocation intermittently fails and the response
+    // goes out EMPTY - a blank page from a healthy device, at random, more
+    // often as the page grows. This overload streams from flash, no copy.
+    AsyncWebServerResponse* res = req->beginResponse(
+        200, "text/html; charset=utf-8",
+        reinterpret_cast<const uint8_t*>(kPortalHtml), sizeof(kPortalHtml) - 1);
     // Deliberately not cached. This page is ~15 KB served from flash over a
     // LAN, so caching saves nothing worth having - and it guarantees that
     // after a firmware update the browser keeps running the OLD page. That
@@ -677,6 +734,8 @@ void LocalApi::begin() {
   g_server.on("/api/schedules", HTTP_GET, handleSchedulesGet);
   g_server.on("/api/automations", HTTP_GET, handleAutomationsGet);
   g_server.on("/api/ota/status", HTTP_GET, handleOtaStatus);
+  g_server.on("/api/pins", HTTP_GET, handlePins);
+  g_server.on("/api/selftest", HTTP_POST, handleSelfTest, nullptr, collectBody);
 
   g_server.on("/api/schedules", HTTP_POST, handleSchedulesPost, nullptr, collectBody);
   g_server.on("/api/automations", HTTP_POST, handleAutomationsPost, nullptr, collectBody);

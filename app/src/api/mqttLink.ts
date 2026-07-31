@@ -208,12 +208,16 @@ export class MqttLink {
     channel: number | 'all',
     action: 'on' | 'off' | 'toggle',
     rev?: number,
+    seconds?: number,
   ): boolean {
     if (!this.client?.connected) return false;
 
     const topic = `${TOPIC_ROOT}/${homeId}/${uuid}/relay/${channel}/set`;
     const payload: Record<string, unknown> = { action };
     if (rev !== undefined) payload.rev = rev;
+    // Timed on: the firmware arms its own auto-off, so "fan for 5 minutes"
+    // keeps its promise even if this phone goes offline a second later.
+    if (seconds !== undefined) payload.seconds = seconds;
 
     this.client.publish(topic, JSON.stringify(payload), { qos: 1 });
     return true;

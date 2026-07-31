@@ -45,6 +45,13 @@ struct Cmd {
   Source   source;
   uint32_t rev;
   bool     hasRev;
+  /// One-off auto-off for THIS command, in seconds. 0 = fall back to the
+  /// channel's configured autoOffSec. It has to travel with the command:
+  /// setting the timer on the state before queueing looks like it works and
+  /// does not, because applyOne recomputes autoOffAtMs from the channel config
+  /// when it runs and silently wipes it. That is why "fan for 5 minutes" used
+  /// to turn the fan on and never off.
+  uint32_t seconds;
 };
 
 QueueHandle_t g_queue = nullptr;
@@ -113,7 +120,8 @@ bool resolveTarget(uint8_t ch, Action action) {
 }
 
 /// Returns true if the relay actually changed.
-bool applyOne(uint8_t ch, Action action, Source source, bool hasRev, uint32_t rev) {
+bool applyOne(uint8_t ch, Action action, Source source, bool hasRev, uint32_t rev,
+              uint32_t seconds = 0) {
   if (ch >= kN) return false;
 
   const ChannelConfig& cfg = ConfigStore::channel(ch);
@@ -171,9 +179,14 @@ bool applyOne(uint8_t ch, Action action, Source source, bool hasRev, uint32_t re
   g_state[ch].changedAtMs = TimeService::nowMsOrUptime();
   g_lastChangeMs[ch] = now;
 
-  // Auto-off timer: armed on turn-on, cleared on turn-off.
-  if (target && cfg.autoOffSec > 0) {
-    g_state[ch].autoOffAtMs = now + cfg.autoOffSec * 1000u;
+  // Auto-off timer: armed on turn-on, cleared on turn-off. A duration carried
+  // by this command wins over the channel's standing configuration, so
+  // "fan for 5 minutes" works on a channel that has no configured timer.
+  const uint32_t autoOff = seconds > 0 ? seconds : cfg.autoOffSec;
+  if (target && autoOff > 0) {
+    g_state[ch].autoOffAtMs = now + autoOff * 1000u;
+    SH_LOGI(TAG, "ch%u auto-off in %lu s", static_cast<unsigned>(ch),
+            static_cast<unsigned long>(autoOff));
   } else {
     g_state[ch].autoOffAtMs = 0;
   }
@@ -230,7 +243,7 @@ void handleCmd(const Cmd& c) {
   if (c.channel == 0xFE) {
     applyMask(c.mask, c.action, c.source);
   } else {
-    applyOne(c.channel, c.action, c.source, c.hasRev, c.rev);
+    applyOne(c.channel, c.action, c.source, c.hasRev, c.rev, c.seconds);
   }
 }
 
@@ -292,6 +305,11 @@ void RelayManager::begin() {
     pinMode(pin, INPUT_PULLUP);
     gpio_set_level(gpio, inactiveLevel());
     pinMode(pin, OUTPUT);
+    // INPUT_OUTPUT rather than plain OUTPUT: identical electrically, but it
+    // leaves the input buffer enabled so the pin can be read back. That
+    // readback is the only way to prove from software that a pin really is
+    // being driven, which is the first question when a relay does not move.
+    gpio_set_direction(gpio, GPIO_MODE_INPUT_OUTPUT);
     digitalWrite(pin, inactiveLevel());
 
     g_state[i] = ChannelState{};
@@ -358,19 +376,19 @@ void RelayManager::taskEntry(void* /*arg*/) {
 }
 
 bool RelayManager::command(uint8_t channel, Action action, Source source) {
-  Cmd c{channel, 0, action, source, 0, false};
+  Cmd c{channel, 0, action, source, 0, false, 0};
   return enqueue(c);
 }
 
 bool RelayManager::commandWithRev(uint8_t channel, Action action, Source source,
                                   uint32_t rev) {
-  Cmd c{channel, 0, action, source, rev, true};
+  Cmd c{channel, 0, action, source, rev, true, 0};
   return enqueue(c);
 }
 
 bool RelayManager::commandMask(uint8_t mask, Action action, Source source) {
   if (mask == 0) return false;
-  Cmd c{0xFE, mask, action, source, 0, false};
+  Cmd c{0xFE, mask, action, source, 0, false, 0};
   return enqueue(c);
 }
 
@@ -400,9 +418,20 @@ bool RelayManager::setAutoOff(uint8_t channel, uint32_t seconds, Source source) 
     return true;
   }
   if (seconds > 86400u * 7u) return false;
-  // Arm first so the timer survives even if the relay was already on.
-  g_state[channel].autoOffAtMs = millis() + seconds * 1000u;
-  command(channel, Action::On, source);
+
+  // The duration rides WITH the command rather than being written to the state
+  // first. Arming it here looked correct and was not: applyOne recomputes
+  // autoOffAtMs from the channel config when the queued command runs, wiping
+  // it. The relay switched on and stayed on.
+  Cmd c{channel, 0, Action::On, source, 0, false, seconds};
+  if (!enqueue(c)) return false;
+
+  // Already on? Nothing will change, so applyOne returns early and never arms
+  // the timer. Set it directly for that case.
+  if (g_state[channel].on) {
+    g_state[channel].autoOffAtMs = millis() + seconds * 1000u;
+  }
+
   SH_LOGI(TAG, "ch%u on for %lu s (%s)", static_cast<unsigned>(channel),
           static_cast<unsigned long>(seconds), toString(source));
   return true;
@@ -478,6 +507,35 @@ size_t RelayManager::toJson(char* out, size_t cap) {
         s.autoOffAtMs && static_cast<int32_t>(s.autoOffAtMs - now) > 0
             ? (s.autoOffAtMs - now) / 1000u
             : 0;
+  }
+  return serializeJson(doc, out, cap);
+}
+
+int RelayManager::rawPinLevel(uint8_t channel) {
+  if (channel >= kN) return -1;
+  return digitalRead(board::kRelayPins[channel]);
+}
+
+size_t RelayManager::toPinDiagnosticsJson(char* out, size_t cap) {
+  JsonDocument doc;
+  doc["activeLow"] = board::kRelayActiveLow;
+  JsonArray arr = doc["pins"].to<JsonArray>();
+
+  for (uint8_t ch = 0; ch < kN; ++ch) {
+    const int expected = g_state[ch].on ? activeLevel() : inactiveLevel();
+    const int actual = digitalRead(board::kRelayPins[ch]);
+
+    JsonObject o = arr.add<JsonObject>();
+    o["channel"] = ch;
+    o["gpio"] = board::kRelayPins[ch];
+    o["name"] = ConfigStore::channel(ch).name;
+    o["shouldBeOn"] = g_state[ch].on;
+    o["expectedLevel"] = expected ? "HIGH" : "LOW";
+    o["actualLevel"] = actual ? "HIGH" : "LOW";
+    // A mismatch means the GPIO itself is misbehaving - a pin conflict, or a
+    // strapping pin being held by something external. A match with a relay
+    // that does not move means the fault is off-board: wiring, or coil power.
+    o["driving"] = (expected == actual);
   }
   return serializeJson(doc, out, cap);
 }

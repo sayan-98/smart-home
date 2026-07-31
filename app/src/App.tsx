@@ -13,6 +13,7 @@ import { setToken } from './api/transport.js';
 import { Login } from './screens/Login.js';
 import { DeviceDetail } from './screens/DeviceDetail.js';
 import { AiBar } from './screens/AiBar.js';
+import { VoiceBar } from './screens/VoiceBar.js';
 import { Help } from './screens/Help.js';
 
 /** Re-renders on every store change. See Store.snapshot for why it must be a counter. */
@@ -225,7 +226,12 @@ export function App(): JSX.Element {
         </div>
       )}
 
-      {store.aiEnabled && store.activeHomeId && <AiBar homeId={store.activeHomeId} />}
+      {/* Direct and broker modes talk to Groq straight from the app with the
+          user's own key; cloud mode goes through the backend's AiBar. */}
+      {(store.direct || store.remote) && <VoiceBar />}
+      {!store.direct && !store.remote && store.aiEnabled && store.activeHomeId && (
+        <AiBar homeId={store.activeHomeId} />
+      )}
 
       <main className={detail ? 'split' : ''}>
         <div className="pane">

@@ -40,4 +40,6 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Voice commands: the native Android recognizer needs the microphone. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 </manifest>

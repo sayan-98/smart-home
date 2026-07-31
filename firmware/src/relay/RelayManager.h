@@ -69,6 +69,17 @@ class RelayManager {
   /// Full snapshot in the shape the local API, MQTT and the app all consume.
   static size_t toJson(char* out, size_t cap);
 
+  /// Reads the ACTUAL electrical level on a channel's relay pin.
+  ///
+  /// The pins are configured INPUT_OUTPUT so the output register can be read
+  /// back. This is what separates "the firmware never drove the pin" from "the
+  /// pin is driven correctly and the relay still did not move" - the second is
+  /// always wiring or power, and without this you cannot tell which you have.
+  static int rawPinLevel(uint8_t channel);
+
+  /// Per-channel wiring report: expected level vs measured level.
+  static size_t toPinDiagnosticsJson(char* out, size_t cap);
+
   /// One channel, same shape as an element of the snapshot array.
   static size_t channelToJson(uint8_t channel, char* out, size_t cap);
 

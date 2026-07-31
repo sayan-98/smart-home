@@ -124,6 +124,24 @@ export async function forgetCreds(): Promise<void> {
   await Preferences.remove({ key: KEY_SAVED });
 }
 
+// --- Groq key (voice / natural-language control) ---------------------------
+//
+// Stored ONLY on this device, entered by the user at runtime. It must never be
+// committed to the repository or baked into a build: the repo is public and an
+// APK is trivially unpacked. App-private Preferences is the same trade every
+// phone password manager makes, and the key is revocable from the Groq console.
+
+const KEY_GROQ = 'sh.groqKey';
+
+export async function getGroqKey(): Promise<string> {
+  return (await Preferences.get({ key: KEY_GROQ })).value ?? '';
+}
+
+export async function setGroqKey(key: string): Promise<void> {
+  if (key) await Preferences.set({ key: KEY_GROQ, value: key.trim() });
+  else await Preferences.remove({ key: KEY_GROQ });
+}
+
 export interface DeviceInfoResponse {
   uuid: string;
   name: string;
